@@ -26,6 +26,10 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
+    "jax",
+    "jax.numpy",
+    "beartype",
+    "jaxtyping",
 ]
 
 [project.optional-dependencies]
