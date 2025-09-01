@@ -3,6 +3,7 @@ import jax.numpy as jnp
 from beartype import beartype as typechecker
 from jaxtyping import jaxtyped
 
+# mainly following Binney 2010 to implement the distribution functions
 
 @jaxtyped(typechecker=typechecker)
 def Rc_from_Lz(Lz: float, v0: float) -> float:
