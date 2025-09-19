@@ -27,9 +27,9 @@ classifiers = [
 ]
 dependencies = [
     "jax",
-    "jax.numpy",
     "beartype",
     "jaxtyping",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]
