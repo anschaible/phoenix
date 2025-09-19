@@ -8,7 +8,9 @@ PHase-space Optimization and EstimatioN In JAX
 [![Documentation Status](https://readthedocs.org/projects/phoenix/badge/)](https://phoenix.readthedocs.io/)
 [![codecov](https://codecov.io/gh/anschaible/phoenix/branch/main/graph/badge.svg)](https://codecov.io/gh/anschaible/phoenix)
 
-![PHOENIX](phoenix_logo.png)
+<p align="center">
+  <img src="phoenix_logo.png" alt="PHOENIX" width="200"/>
+</p>
 
 
 ## Installation
