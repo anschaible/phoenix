@@ -8,6 +8,9 @@ PHase-space Optimization and EstimatioN In JAX
 [![Documentation Status](https://readthedocs.org/projects/phoenix/badge/)](https://phoenix.readthedocs.io/)
 [![codecov](https://codecov.io/gh/anschaible/phoenix/branch/main/graph/badge.svg)](https://codecov.io/gh/anschaible/phoenix)
 
+![PHOENIX](phoenix_logo.png)
+
+
 ## Installation
 
 The Python package `phoenix` can be installed from PyPI:
