@@ -120,17 +120,19 @@ def Sigma_exp(Rc: ArrayLike, R0: ArrayLike, Rd: ArrayLike, Sigma0: ArrayLike) ->
 @jaxtyped
 def sigmaR_of_Rc(Rc: ArrayLike, R0: ArrayLike, RsigR: ArrayLike, sigmaR0_at_R0: ArrayLike) -> Float[Array, "..."]:
     Rc, R0, RsigR, sigmaR0_at_R0 = map(jnp.asarray, (Rc, R0, RsigR, sigmaR0_at_R0))
-    return sigmaR0_at_R0 * jnp.exp((R0 - Rc) / jnp.clip(RsigR, 1e-12))
+    sigmaR_of_Rc = sigmaR0_at_R0 * jnp.exp((R0 - Rc) / jnp.clip(RsigR, 1e-3))
+    return jnp.clip(sigmaR_of_Rc, 1e-3)
 
 @jaxtyped
 def sigmaz_of_Rc(Rc: ArrayLike, R0: ArrayLike, RsigZ: ArrayLike, sigmaz0_at_R0: ArrayLike) -> Float[Array, "..."]:
     Rc, R0, RsigZ, sigmaz0_at_R0 = map(jnp.asarray, (Rc, R0, RsigZ, sigmaz0_at_R0))
-    return sigmaz0_at_R0 * jnp.exp((R0 - Rc) / jnp.clip(RsigZ, 1e-12))
+    sigmaz_of_Rc = sigmaz0_at_R0 * jnp.exp((R0 - Rc) / jnp.clip(RsigZ, 1e-3))
+    return jnp.clip(sigmaz_of_Rc, 1e-3)
 
 @jaxtyped
 def sigma_age(sigma_ref: ArrayLike, tau: ArrayLike, tau1: ArrayLike, taum: ArrayLike, beta: ArrayLike) -> Float[Array, "..."]:
     sigma_ref, tau, tau1, taum, beta = map(jnp.asarray, (sigma_ref, tau, tau1, taum, beta))
-    return sigma_ref * ((tau + tau1) / jnp.clip(taum + tau1, 1e-12))**beta
+    return sigma_ref * ((tau + tau1) / jnp.clip(taum + tau1, 1e-5))**beta
 
 # ================= Quasi-isothermal DF =================
 
@@ -160,10 +162,10 @@ def quasi_isothermal_df(
     sigR  = sigmaR_of_Rc(Rc, R0, RsigR, sigmaR0_R0)
     sigZ  = sigmaz_of_Rc(Rc, R0, RsigZ,  sigmaz0_R0)
 
-    pref = (Om * Sigma) / (2.0 * jnp.pi**2 * jnp.clip(sigR, 1e-12)**2 * jnp.clip(sigZ, 1e-12)**2 * jnp.clip(kap, 1e-12))
-    eR   = jnp.exp(- kap * JR / jnp.clip(sigR, 1e-12)**2)
-    eZ   = jnp.exp(- nv  * Jz / jnp.clip(sigZ, 1e-12)**2)
-    rot  = 0.5 * (1.0 + jnp.tanh(Jphi / jnp.clip(L0, 1e-12)))
+    pref = (Om * Sigma) / (2.0 * jnp.pi**2 * sigR**2 * sigZ**2 * kap)
+    eR   = jnp.exp(- kap * JR / sigR**2)
+    eZ   = jnp.exp(- nv  * Jz / sigZ**2)
+    rot  = 0.5 * (1.0 + jnp.tanh(Jphi / L0))
     return pref * eR * eZ * rot
 
 # ================= Thin/thick wrappers =================
@@ -232,9 +234,9 @@ def f_total_disc(JR: ArrayLike, Jz: ArrayLike, Jphi: ArrayLike,
     return f_thin * f_thin_disc_vals + f_thick * f_thick_disc_vals
 
 
-def f_total_disc_from_params(JR, Jz, Jphi, params: Dict):
-    Phi_xyz: Callable = params["Phi_xyz"]
-    theta: Tuple = tuple(params.get("theta", ()))
+def f_total_disc_from_params(Jr, Jz, Jphi, Phi_xyz, theta, params: Dict):
+    #Phi_xyz: Callable = params["Phi_xyz"]
+    #theta: Tuple = tuple(params.get("theta", ()))
 
     if "thin" in params and "thick" in params:
         thin  = params["thin"];  thick = params["thick"]
@@ -259,11 +261,16 @@ def f_total_disc_from_params(JR, Jz, Jphi, params: Dict):
         sigmaR0_R0_thick, sigmaz0_R0_thick = params["sigmaR0_R0_thick"], params["sigmaz0_R0_thick"]
         L0_thick = params["L0_thick"]; Rinit_for_Rc_thick = params.get("Rinit_for_Rc_thick", 8.0)
 
-    f_thin  = float(params.get("f_thin", 0.7))
-    f_thick = float(params.get("f_thick", 0.3))
+    f_thin  = jnp.asarray(params.get("f_thin", 0.7),  dtype=jnp.float32)
+    f_thick = jnp.asarray(params.get("f_thick", 0.3), dtype=jnp.float32)
+
+    # optional: sicherstellen, dass f_thin+f_thick=1 (ohne Python-Logik)
+    norm = jnp.clip(f_thin + f_thick, 1e-12)
+    f_thin, f_thick = f_thin/norm, f_thick/norm
+
 
     return f_total_disc(
-        JR, Jz, Jphi,
+        Jr, Jz, Jphi,
         Phi_xyz, *theta,
         R0_thin=R0_thin, Rd_thin=Rd_thin, Sigma0_thin=Sigma0_thin,
         RsigR_thin=RsigR_thin, RsigZ_thin=RsigZ_thin,

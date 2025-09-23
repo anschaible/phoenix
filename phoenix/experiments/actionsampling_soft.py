@@ -1,19 +1,18 @@
-# soft_sampling.py
-# adapted from Nihat Oguz
-"""
-This module implements a differentiable sampling pipeline using a soft acceptance approach.
-A sigmoid function is applied to assign acceptance weights to candidate actions generated from the total DF. These weighted candidate actions
-can then be transformed into phase-space coordinates.
-"""
+# produces points with probability proportional to f(J)
+# sampleactions.py
+from functools import partial
+from typing import Callable
 
 import jax
 import jax.numpy as jnp
 from jax import random, vmap, jit
 from jax.nn import sigmoid
-from typing import Dict, Callable
+from beartype import beartype
+from jaxtyping import Array, Float, jaxtyped
+from jax.typing import ArrayLike
 
-from phoenix.distributionfunctions import f_total_disc_from_params as f_total_disc
 
+from phoenix.distributionfunctions import f_total_disc_from_params
 
 def soft_acceptance(df_vals, rand_vals, envelope_max, tau=0.01):
     """
@@ -31,7 +30,7 @@ def soft_acceptance(df_vals, rand_vals, envelope_max, tau=0.01):
     """
     return sigmoid((df_vals / envelope_max - rand_vals) / tau)
 
-def sample_df_potential(key, params, n_candidates, envelope_max, tau=0.01):
+def sample_df_potential(key, params, phi_xyz, theta, n_candidates, envelope_max, tau=0.01):
     """
     Differentiable version of the sampling pipeline.
     
@@ -60,9 +59,9 @@ def sample_df_potential(key, params, n_candidates, envelope_max, tau=0.01):
     candidates = jnp.stack([Jr_candidates, Jz_candidates, Lz_candidates], axis=1)
     
     #Evaluate the total DF for each candidate
-    df_total_vec = jit(vmap(lambda cand: f_total_disc(cand[0], cand[1], cand[2], params)))
+    df_total_vec = jit(vmap(lambda cand: f_total_disc_from_params(cand[0], cand[1], cand[2], phi_xyz, theta, params)))
     df_vals = df_total_vec(candidates)
-
+    
     #Generate uniform random numbers
     key, subkey = random.split(key)
     rand_vals = random.uniform(subkey, shape=(n_candidates,))
@@ -72,5 +71,5 @@ def sample_df_potential(key, params, n_candidates, envelope_max, tau=0.01):
     
     #here we multiply each candidate by its weight
     weighted_candidates = candidates * soft_weights[:, None]
-    
+
     return weighted_candidates, soft_weights
