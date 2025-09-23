@@ -73,6 +73,7 @@ def phi_total(R, z, **kwargs):
     return phi_disk(R, z, **kwargs) + phi_bulge(R, z, **kwargs) + phi_halo_NFW(R, z, **kwargs)
 
 #Frequencies
+
 def v_c(R, **kwargs):
     """
     Computes the circular velocity v_c at radius R
@@ -85,7 +86,7 @@ def v_c(R, **kwargs):
     """
     phi_R = grad(lambda R: phi_total(R, 0.0))
     expr = R * phi_R(R, **kwargs)
-    expr = jnp.maximum(expr, 1e-6) #avoid division by zero
+    expr = jnp.maximum(expr, 1e-3) #avoid division by zero
     return jnp.sqrt(expr)
 
 def kappa(R, **kwargs):

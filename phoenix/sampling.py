@@ -27,7 +27,7 @@ def soft_acceptance(df_vals, rand_vals, envelope_max, tau=0.01):
     """
     return sigmoid((df_vals / envelope_max - rand_vals) / tau)
 
-def sample_df_potential(key, params, n_candidates, envelope_max, tau=0.01):
+def sample_df_potential(key, params, n_candidates, envelope_max, tau=0.01, **kwargs):
     """
     Differentiable version of the sampling pipeline.
     
@@ -56,7 +56,7 @@ def sample_df_potential(key, params, n_candidates, envelope_max, tau=0.01):
     candidates = jnp.stack([Jr_candidates, Jz_candidates, Lz_candidates], axis=1)
     
     #Evaluate the total DF for each candidate
-    df_total_vec = jit(vmap(lambda cand: df_total_potential(cand[0], cand[1], cand[2], params)))
+    df_total_vec = jit(vmap(lambda cand: df_total_potential(cand[0], cand[1], cand[2], params, **kwargs)))
     df_vals = df_total_vec(candidates)
     
     #Generate uniform random numbers

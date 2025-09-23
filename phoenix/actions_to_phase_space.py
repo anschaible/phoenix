@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 from jax import random, vmap
 from phoenix.potentials import kappa, nu, v_c
+from phoenix.distribution_functions import Rc_from_Lz
 from jax import grad
 
 def actions_to_phase_space(Jr, Jz, Lz, params, key):
@@ -30,10 +31,13 @@ def actions_to_phase_space(Jr, Jz, Lz, params, key):
       A tuple (x, y, z, v_x, v_y, v_z) representing the star's Cartesian coordinates
       and velocity components.
     """
-    v0 = params["v0"]
+    R0 = params["R0"]
+    #v0 = params["v0"]
+    Rc_val = Rc_from_Lz(Lz, R_init=R0)
     #Guiding center radius from angular momentum
     epsilon = 0.1 
-    Rc_val = jnp.maximum(Lz / params["v0"], epsilon)
+    #Rc_val = jnp.maximum(Lz / params["v0"], epsilon)
+    Rc_val = jnp.maximum(Rc_val, epsilon)
 
 
     #Obtain dynamical frequencies from potentials

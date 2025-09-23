@@ -123,10 +123,6 @@ def df_thin_age_potential(Jr, Jz, Lz, params, **kwargs):
     weights = jnp.exp(-tau_values / t0)
     weights = weights / jnp.sum(weights)
     
-    #Compute age-dependent dispersions
-    sigma_r_ages = params["sigma_r0"] * ((tau_values + tau1) / (tau_m + tau1)) ** beta
-    sigma_z_ages = params["sigma_z0"] * ((tau_values + tau1) / (tau_m + tau1)) ** beta
-    
     #Compute guiding center radius from Lz and v0
     #Rc_val = Rc_of_Lz(Lz, v0)
     Rc_val = Rc_from_Lz(Lz, R0)
@@ -135,6 +131,12 @@ def df_thin_age_potential(Jr, Jz, Lz, params, **kwargs):
     #Compute frequencies
     kap = kappa(Rc_val)
     nu_val = nu(Rc_val)
+
+    #Compute age-dependent dispersions
+    sigma_r = params["sigma_r0"] * jnp.exp((R0-Rc_val)/Rd)
+    sigma_z = params["sigma_z0"] * jnp.exp((R0-Rc_val)/Rd)
+    sigma_r_ages = sigma_r * ((tau_values + tau1) / (tau_m + tau1)) ** beta
+    sigma_z_ages = sigma_z * ((tau_values + tau1) / (tau_m + tau1)) ** beta
     
     Sigma = surface_density_factor(Rc_val, R0, Rd)
     rot_factor = (1.0 + jnp.tanh(Lz / L0))/2.0
@@ -173,8 +175,7 @@ def df_thick_potential(Jr, Jz, Lz, params, **kwargs):
     Rd_thick = params["Rd_thick"]
     #v0 = params["v0"]
     L0_thick = params["L0_thick"]
-    sigma_r0_thick = params["sigma_r0_thick"]
-    sigma_z0_thick = params["sigma_z0_thick"]
+    
     
     #Rc_val = Rc_of_Lz(Lz, v0)
     Rc_val = Rc_from_Lz(Lz, R0)
@@ -182,7 +183,10 @@ def df_thick_potential(Jr, Jz, Lz, params, **kwargs):
     
     kap = kappa(Rc_val)
     nu_val = nu(Rc_val)
-    
+
+    sigma_r0_thick = params["sigma_r0_thick"] * jnp.exp((R0 - Rc_val)/Rd_thick)
+    sigma_z0_thick = params["sigma_z0_thick"] * jnp.exp((R0 - Rc_val)/Rd_thick)
+
     Sigma = surface_density_factor(Rc_val, R0, Rd_thick)
     rot_factor = (1.0 + jnp.tanh(Lz / L0_thick)) / 2.0
 
