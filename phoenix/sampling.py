@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 from jax import random, vmap, jit
 from jax.nn import sigmoid
-from phoenix.distribution_functions import df_total_potential
+from phoenix.distributionfunctions import f_total_disc_from_params
 
 def soft_acceptance(df_vals, rand_vals, envelope_max, tau=0.01):
     """
@@ -27,7 +27,7 @@ def soft_acceptance(df_vals, rand_vals, envelope_max, tau=0.01):
     """
     return sigmoid((df_vals / envelope_max - rand_vals) / tau)
 
-def sample_df_potential(key, params, n_candidates, envelope_max, tau=0.01, **kwargs):
+def sample_df_potential(key, params, Phi_xyz, theta, n_candidates, envelope_max, tau=0.01, **kwargs):
     """
     Differentiable version of the sampling pipeline.
     
@@ -56,7 +56,8 @@ def sample_df_potential(key, params, n_candidates, envelope_max, tau=0.01, **kwa
     candidates = jnp.stack([Jr_candidates, Jz_candidates, Lz_candidates], axis=1)
     
     #Evaluate the total DF for each candidate
-    df_total_vec = jit(vmap(lambda cand: df_total_potential(cand[0], cand[1], cand[2], params, **kwargs)))
+    #df_total_vec = jit(vmap(lambda cand: df_total_potential(cand[0], cand[1], cand[2], params, **kwargs)))
+    df_total_vec = jit(vmap(lambda cand: f_total_disc_from_params(cand[0], cand[1], cand[2], Phi_xyz, theta, params)))
     df_vals = df_total_vec(candidates)
     
     #Generate uniform random numbers
@@ -69,4 +70,4 @@ def sample_df_potential(key, params, n_candidates, envelope_max, tau=0.01, **kwa
     #here we multiply each candidate by its weight
     weighted_candidates = candidates * soft_weights[:, None]
     
-    return weighted_candidates, soft_weights
+    return candidates, weighted_candidates, soft_weights
