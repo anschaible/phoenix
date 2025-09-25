@@ -11,8 +11,8 @@ generate a distribution of positions and velocities.
 import jax
 import jax.numpy as jnp
 from jax import random, vmap
-from phoenix.nihat import kappa, nu, v_c
-from phoenix.nihat import Rc_of_Lz
+from phoenix.nihat import kappa
+from phoenix.distributionfunctions import Rc_from_Lz, nu, vcirc
 from jax import grad
 
 def actions_to_phase_space(Jr, Jz, Lz, params, key, Phi_xyz, theta):
@@ -32,8 +32,9 @@ def actions_to_phase_space(Jr, Jz, Lz, params, key, Phi_xyz, theta):
       and velocity components.
     """
     R0 = params["R0"]
-    v0 = 200.0 #params["v0"]
-    Rc_val = Rc_of_Lz(Lz, v0)
+    #v0 = 200.0 #params["v0"]
+    #Rc_val = Rc_of_Lz(Lz, v0)
+    Rc_val = Rc_from_Lz(Phi_xyz, Lz, R0, *theta)
     #Guiding center radius from angular momentum
     epsilon = 0.1 
     #Rc_val = jnp.maximum(Lz / params["v0"], epsilon)
@@ -41,16 +42,17 @@ def actions_to_phase_space(Jr, Jz, Lz, params, key, Phi_xyz, theta):
 
 
     #Obtain dynamical frequencies from potentials
+    #kap = kappa(Phi_xyz, Rc_val, *theta)
     kap = kappa(Rc_val)
-    nu_val = nu(Rc_val)
+    nu_val = nu(Phi_xyz, Rc_val, *theta)
 
     #Amplitudes for oscillations in the radial and vertical directions
     A_R = jnp.sqrt(2.0 * Jr / jnp.maximum(kap, epsilon))
     A_z = jnp.sqrt(2.0 * Jz / jnp.maximum(nu_val, epsilon))
 
     #Dynamical frequencies
-    Omega = v_c(Rc_val) / Rc_val
-    dO_dR = grad(lambda r: v_c(r) / r)(Rc_val)
+    Omega = vcirc(Phi_xyz, Rc_val, *theta) / Rc_val
+    dO_dR = grad(lambda r: vcirc(Phi_xyz, Rc_val, *theta) / r)(Rc_val)
     
     #Sample random angles uniformly in [0, 2π]
     key, subkey = random.split(key)

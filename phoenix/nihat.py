@@ -104,35 +104,3 @@ def kappa(R, **kwargs):
     expr = R * 2 * Omega * dOmega_dR + 4 * Omega**2
     expr = jnp.maximum(expr, 1e-6)
     return jnp.sqrt(expr)
-
-def nu(R, **kwargs):
-    """
-    Computes the vertical oscillation frequency ν
-    
-    Parameters:
-      - R: Radius (in kpc)
-      
-    Returns:
-      The vertical oscillation frequency at R.
-    """
-    phi_z = lambda z: phi_total(R, z, **kwargs)
-    phi_zz = grad(lambda z: grad(phi_z)(z))
-    val = jnp.abs(phi_zz(0.0))
-    val = jnp.maximum(val, 1e-6)
-    return jnp.sqrt(val)
-
-
-def Rc_of_Lz(Lz, v0):
-    """
-    Computes the guiding center radius given angular momentum Lz and circular velocity v0.
-    
-    Parameters:
-      - Lz: Angular momentum about the z-axis.
-      - v0: Characteristic circular velocity.
-    
-    Returns:
-      The guiding center radius Rc
-
-    This is an approximation assuming a flat rotation curve with constant v0.
-    """
-    return Lz / v0
