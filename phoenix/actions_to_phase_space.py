@@ -11,8 +11,7 @@ generate a distribution of positions and velocities.
 import jax
 import jax.numpy as jnp
 from jax import random, vmap
-from phoenix.nihat import kappa
-from phoenix.distributionfunctions import Rc_from_Lz, nu, vcirc
+from phoenix.distributionfunctions import Rc_from_Lz, nu, vcirc, kappa
 from jax import grad
 
 def actions_to_phase_space(Jr, Jz, Lz, params, key, Phi_xyz, theta):
@@ -42,8 +41,8 @@ def actions_to_phase_space(Jr, Jz, Lz, params, key, Phi_xyz, theta):
 
 
     #Obtain dynamical frequencies from potentials
-    #kap = kappa(Phi_xyz, Rc_val, *theta)
-    kap = kappa(Rc_val)
+    kap = kappa(Phi_xyz, Rc_val, *theta)
+    #kap = kappa(Rc_val)
     nu_val = nu(Phi_xyz, Rc_val, *theta)
 
     #Amplitudes for oscillations in the radial and vertical directions
