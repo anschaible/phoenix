@@ -264,8 +264,8 @@ def f_total_disc_from_params(Jr, Jz, Jphi, Phi_xyz, theta, params: Dict):
     f_thick = jnp.asarray(params.get("f_thick", 0.3), dtype=jnp.float32)
 
     # optional: sicherstellen, dass f_thin+f_thick=1 (ohne Python-Logik)
-    norm = jnp.clip(f_thin + f_thick, 1e-12)
-    f_thin, f_thick = f_thin/norm, f_thick/norm
+    #norm = jnp.clip(f_thin + f_thick, 1e-12)
+    #f_thin, f_thick = f_thin/norm, f_thick/norm
 
 
     return f_total_disc(
@@ -282,4 +282,44 @@ def f_total_disc_from_params(Jr, Jz, Jphi, Phi_xyz, theta, params: Dict):
         Rinit_for_Rc_thin=Rinit_for_Rc_thin,
         Rinit_for_Rc_thick=Rinit_for_Rc_thick,
         f_thin=f_thin, f_thick=f_thick,
+    )
+
+def f_thin_disc_from_params(Jr, Jz, Jphi, Phi_xyz, theta, params: Dict):
+    R0 = params["R0_thin"]
+    Rd = params["Rd_thin"]
+    Sigma0 = params["Sigma0_thin"]
+    RsigR = params["RsigR_thin"]
+    RsigZ = params["RsigZ_thin"]
+    sigmaR0_R0 = params["sigmaR0_R0_thin"]
+    sigmaz0_R0 = params["sigmaz0_R0_thin"]
+    L0 = params["L0_thin"]
+    Rinit_for_Rc = params.get("Rinit_for_Rc_thin", 8.0)
+
+    return f_thin_disc(
+        Jr, Jz, Jphi,
+        Phi_xyz, *theta,
+        R0=R0, Rd=Rd, Sigma0=Sigma0,
+        RsigR=RsigR, RsigZ=RsigZ,
+        sigmaR0_R0=sigmaR0_R0, sigmaz0_R0=sigmaz0_R0,
+        L0=L0, Rinit_for_Rc=Rinit_for_Rc,
+    )
+
+def f_thick_disc_from_params(Jr, Jz, Jphi, Phi_xyz, theta, params: Dict):  
+    R0 = params["R0_thick"]
+    Rd = params["Rd_thick"]
+    Sigma0 = params["Sigma0_thick"]
+    RsigR = params["RsigR_thick"]
+    RsigZ = params["RsigZ_thick"]
+    sigmaR0_R0 = params["sigmaR0_R0_thick"]
+    sigmaz0_R0 = params["sigmaz0_R0_thick"]
+    L0 = params["L0_thick"]
+    Rinit_for_Rc = params.get("Rinit_for_Rc_thick", 8.0)
+
+    return f_thick_disc(
+        Jr, Jz, Jphi,
+        Phi_xyz, *theta,
+        R0=R0, Rd=Rd, Sigma0=Sigma0,
+        RsigR=RsigR, RsigZ=RsigZ,
+        sigmaR0_R0=sigmaR0_R0, sigmaz0_R0=sigmaz0_R0,
+        L0=L0, Rinit_for_Rc=Rinit_for_Rc,
     )
