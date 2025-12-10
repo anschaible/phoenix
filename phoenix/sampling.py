@@ -9,7 +9,8 @@ import jax
 import jax.numpy as jnp
 from jax import random, vmap, jit
 from jax.nn import sigmoid
-from phoenix.distributionfunctions import f_total_disc_from_params
+from phoenix.distributionfunctions_disky_Binney import f_total_disc_from_params
+from phoenix.distributionfunction import distributionfunction_combined
 
 def soft_acceptance(df_vals, rand_vals, envelope_max, tau=0.01):
     """
@@ -27,7 +28,7 @@ def soft_acceptance(df_vals, rand_vals, envelope_max, tau=0.01):
     """
     return sigmoid((df_vals / envelope_max - rand_vals) / tau)
 
-def sample_df_potential(key, params, Phi_xyz, theta, n_candidates, envelope_max, tau=0.01, **kwargs):
+def sample_df_potential(key, params, Phi_xyz_thin, Phi_xyz_thick, Phi_xyz_spheroid, theta_thin, theta_thick, theta_spheroid, n_candidates, envelope_max, tau=0.01, **kwargs):
     """
     Differentiable version of the sampling pipeline.
     
@@ -57,7 +58,53 @@ def sample_df_potential(key, params, Phi_xyz, theta, n_candidates, envelope_max,
     
     #Evaluate the total DF for each candidate
     #df_total_vec = jit(vmap(lambda cand: df_total_potential(cand[0], cand[1], cand[2], params, **kwargs)))
-    df_total_vec = jit(vmap(lambda cand: f_total_disc_from_params(cand[0], cand[1], cand[2], Phi_xyz, theta, params)))
+    df_total_vec = jit(vmap(lambda cand: distributionfunction_combined(cand[0], cand[1], cand[2], Phi_xyz_thin, Phi_xyz_thick, Phi_xyz_spheroid, theta_thin, theta_thick, theta_spheroid, params)))
+    df_vals = df_total_vec(candidates)
+    
+    #Generate uniform random numbers
+    key, subkey = random.split(key)
+    rand_vals = random.uniform(subkey, shape=(n_candidates,))
+    
+    #Compute the soft acceptance weights
+    soft_weights = soft_acceptance(df_vals, rand_vals, envelope_max, tau)
+    
+    #here we multiply each candidate by its weight
+    weighted_candidates = candidates * soft_weights[:, None]
+    
+    return candidates, weighted_candidates, soft_weights
+
+
+def sample_df_potential_single(df, key, params, Phi_xyz, theta, n_candidates, envelope_max, tau=0.01, **kwargs):
+    """
+    Differentiable version of the sampling pipeline.
+    
+    Instead of a hard acceptance/rejection, returns weighted candidate actions.
+    
+    Parameters:
+      - key: A JAX PRNGKey for random number generation.
+      - params: Dictionary with DF parameters.
+      - n_candidates: Number of candidate samples to generate.
+      - envelope_max: Normalization factor.
+      - tau: Temperature parameter for soft acceptance.
+      
+    Returns:
+      A tuple (weighted_candidates, soft_weights):
+        - weighted_candidates: Array of shape (n_candidates, 3) 
+          where each candidate is multiplied by its soft acceptance weight.
+        - soft_weights: Array of shape (n_candidates,) containing the acceptance weights.
+    """
+    key, subkey = random.split(key)
+    Jr_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=20000.0)
+    key, subkey = random.split(key)
+    Jz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=5000.0)
+    key, subkey = random.split(key)
+    Lz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=40000.0)
+    
+    candidates = jnp.stack([Jr_candidates, Jz_candidates, Lz_candidates], axis=1)
+    
+    #Evaluate the total DF for each candidate
+    #df_total_vec = jit(vmap(lambda cand: df_total_potential(cand[0], cand[1], cand[2], params, **kwargs)))
+    df_total_vec = jit(vmap(lambda cand: df(cand[0], cand[1], cand[2], Phi_xyz, theta, params)))
     df_vals = df_total_vec(candidates)
     
     #Generate uniform random numbers
