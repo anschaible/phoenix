@@ -35,9 +35,12 @@ def actions_to_phase_space(Jr, Jz, Lz, params, key, Phi_xyz, theta):
     #Rc_val = Rc_of_Lz(Lz, v0)
     Rc_val = Rc_from_Lz(Phi_xyz, Lz, R0, *theta)
     #Guiding center radius from angular momentum
-    epsilon = 0.1 
+    epsilon = 1e-6
     #Rc_val = jnp.maximum(Lz / params["v0"], epsilon)
     Rc_val = jnp.maximum(Rc_val, epsilon)
+
+    Jr = jnp.sqrt(Jr**2 + epsilon**2)
+    Jz = jnp.sqrt(Jz**2 + epsilon**2)
 
 
     #Obtain dynamical frequencies from potentials
