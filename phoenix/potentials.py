@@ -6,6 +6,9 @@ from jaxtyping import jaxtyped
 
 # follow Agama notes (https://github.com/GalacticDynamics-Oxford/Agama/blob/master/doc/reference.pdf)
 
+#G = 6.674e-11*1.989e30/((3.0857e16)**3)  # in #pc^3 / Msun / s^2
+G=4.300917e-6 # in (km/s)^2 * kpc / Msun
+
 # Density-only models
 @jaxtyped(typechecker=typechecker)
 def disk_density(x, y, z, Sigma0, Rd, h, Rcut, n):
@@ -198,7 +201,7 @@ def plummer_potential(x, y, z, M, a):
         Gravitational potential at (x, y, z)
     """
     r2 = x**2 + y**2 + z**2
-    return -M / jnp.sqrt(a**2 + r2)
+    return -G*M / jnp.sqrt(a**2 + r2)
 
 def isochrone_potential(x, y, z, M, a):
     """
@@ -266,7 +269,7 @@ def miyamoto_nagai_potential(x, y, z, M, a, b):
     R2 = x**2 + y**2
     B = jnp.sqrt(z**2 + b**2)
     denom = jnp.sqrt(R2 + (a + B)**2)
-    return -M / denom
+    return - G * M / denom
 
 def perfect_ellipsoid_density(x, y, z, M, a, q):
     """

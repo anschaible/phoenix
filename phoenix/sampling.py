@@ -48,11 +48,11 @@ def sample_df_potential(key, params, Phi_xyz_thin, Phi_xyz_thick, Phi_xyz_sphero
         - soft_weights: Array of shape (n_candidates,) containing the acceptance weights.
     """
     key, subkey = random.split(key)
-    Jr_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=20000.0)
+    Jr_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=200.0)
     key, subkey = random.split(key)
-    Jz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=5000.0)
+    Jz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=50.0)
     key, subkey = random.split(key)
-    Lz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=40000.0)
+    Lz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=4000.0)
     
     candidates = jnp.stack([Jr_candidates, Jz_candidates, Lz_candidates], axis=1)
     
@@ -94,11 +94,11 @@ def sample_df_potential_single(df, key, params, Phi_xyz, theta, n_candidates, en
         - soft_weights: Array of shape (n_candidates,) containing the acceptance weights.
     """
     key, subkey = random.split(key)
-    Jr_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=20000.0)
+    Jr_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=400.0)
     key, subkey = random.split(key)
-    Jz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=5000.0)
+    Jz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=400.0)
     key, subkey = random.split(key)
-    Lz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=40000.0)
+    Lz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=2000.0)
     
     candidates = jnp.stack([Jr_candidates, Jz_candidates, Lz_candidates], axis=1)
     
