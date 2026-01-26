@@ -49,11 +49,11 @@ def isochrone_potential(x, y, z, M, a):
         Gravitational potential at (x, y, z)
     """
     r2 = x**2 + y**2 + z**2
-    return -M / (a + jnp.sqrt(r2 + a**2))
+    return - G * M / (a + jnp.sqrt(r2 + a**2))
 
 def nfw_potential(x, y, z, M, a):
     """
-    NFW potential in 3D.
+    Navarro-Frenk-White potential in 3D.
 
     Parameters
     ----------
@@ -71,7 +71,7 @@ def nfw_potential(x, y, z, M, a):
     """
     r = jnp.sqrt(x**2 + y**2 + z**2)
     r = jnp.maximum(r, 1e-6)  # avoid division by zero
-    return -M / r * jnp.log(1 + r / a)
+    return - G * M / r * jnp.log(1 + r / a)
 
 def miyamoto_nagai_potential(x, y, z, M, a, b):
     """
@@ -98,7 +98,57 @@ def miyamoto_nagai_potential(x, y, z, M, a, b):
     denom = jnp.sqrt(R2 + (a + B)**2)
     return - G * M / denom
 
-@jaxtyped(typechecker=typechecker)
+def logarithmic_potential(x, y, z, v0, rcore, p, q):
+    """
+    Logarithmic potential in 3D with axis ratios.
+
+    Parameters
+    ----------
+    x, y, z : float or array
+        Cartesian coordinates
+    v0 : float
+        Velocity
+    rcore : float
+        Scale radius
+    p : float
+        Axis ratio (y-axis)
+    q : float
+        Axis ratio (z-axis)
+    
+    Returns
+    -------
+    Phi : float or array
+        Gravitational potential at (x, y, z)
+    """
+    rtilde2 = x**2 + (y / p)**2 + (z / q)**2
+    return 0.5 * v0**2 * jnp.log(rcore**2 + rtilde2)
+
+
+
+########################not used for now and therefore no tests exist so far###########################
+def harmonic_potential(x, y, z, Omega, p, q):
+    """
+    Harmonic potential in 3D with axis ratios.
+    
+    Parameters
+    ----------
+    x, y, z : float or array
+        Cartesian coordinates
+    Omega : float
+        Frequency
+    p : float
+        Axis ratio (y-axis)
+    q : float
+        Axis ratio (z-axis)
+    
+    Returns
+    -------
+    Phi : float or array
+        Gravitational potential at (x, y, z)
+    """
+    rtilde2 = x**2 + (y / p)**2 + (z / q)**2
+    return 0.5 * Omega**2 * rtilde2
+
 def disk_density(x, y, z, Sigma0, Rd, h, Rcut, n):
     """
     Compute the density ρ(R, z) of a generalized disk model.
@@ -270,9 +320,6 @@ def sersic_surface_density(x, y, Sigma0, bn, a, n):
 
     return Sigma0 * jnp.exp(-bn * (R / a) ** (1 / n))
 
-
-
-
 def perfect_ellipsoid_density(x, y, z, M, a, q):
     """
     Perfect ellipsoid density profile in 3D.
@@ -356,50 +403,5 @@ def ferrers_density(x, y, z, M, a, p, q):
     profile = (1 - (rtilde / a)**2) ** 2
     return norm * profile
 
-def logarithmic_potential(x, y, z, v0, rcore, p, q):
-    """
-    Logarithmic potential in 3D with axis ratios.
 
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    v0 : float
-        Velocity
-    rcore : float
-        Scale radius
-    p : float
-        Axis ratio (y-axis)
-    q : float
-        Axis ratio (z-axis)
-    
-    Returns
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    rtilde2 = x**2 + (y / p)**2 + (z / q)**2
-    return 0.5 * v0**2 * jnp.log(rcore**2 + rtilde2)
 
-def harmonic_potential(x, y, z, Omega, p, q):
-    """
-    Harmonic potential in 3D with axis ratios.
-    
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    Omega : float
-        Frequency
-    p : float
-        Axis ratio (y-axis)
-    q : float
-        Axis ratio (z-axis)
-    
-    Returns
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    rtilde2 = x**2 + (y / p)**2 + (z / q)**2
-    return 0.5 * Omega**2 * rtilde2
