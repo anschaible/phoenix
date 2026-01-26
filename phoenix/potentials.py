@@ -3,13 +3,101 @@ import jax.numpy as jnp
 from beartype import beartype as typechecker
 from jaxtyping import jaxtyped
 
+from phoenix.constants import G
+
 
 # follow Agama notes (https://github.com/GalacticDynamics-Oxford/Agama/blob/master/doc/reference.pdf)
 
-#G = 6.674e-11*1.989e30/((3.0857e16)**3)  # in #pc^3 / Msun / s^2
-G=4.300917e-6 # in (km/s)^2 * kpc / Msun
 
-# Density-only models
+def plummer_potential(x, y, z, M, a):
+    """
+    Plummer potential in 3D.
+
+    Parameters
+    ----------
+    x, y, z : float or array
+        Cartesian coordinates
+    M : float
+        Mass
+    a : float
+        Scale radius
+
+    Returns
+    -------
+    Phi : float or array
+        Gravitational potential at (x, y, z)
+    """
+    r2 = x**2 + y**2 + z**2
+    return -G*M / jnp.sqrt(a**2 + r2)
+
+def isochrone_potential(x, y, z, M, a):
+    """
+    Isochrone potential in 3D.
+
+    Parameters
+    ----------
+    x, y, z : float or array
+        Cartesian coordinates
+    M : float
+        Mass
+    a : float
+        Scale radius
+
+    Returns
+    -------
+    Phi : float or array
+        Gravitational potential at (x, y, z)
+    """
+    r2 = x**2 + y**2 + z**2
+    return -M / (a + jnp.sqrt(r2 + a**2))
+
+def nfw_potential(x, y, z, M, a):
+    """
+    NFW potential in 3D.
+
+    Parameters
+    ----------
+    x, y, z : float or array
+        Cartesian coordinates
+    M : float
+        Mass
+    a : float
+        Scale radius
+
+    Returns
+    -------
+    Phi : float or array
+        Gravitational potential at (x, y, z)
+    """
+    r = jnp.sqrt(x**2 + y**2 + z**2)
+    r = jnp.maximum(r, 1e-6)  # avoid division by zero
+    return -M / r * jnp.log(1 + r / a)
+
+def miyamoto_nagai_potential(x, y, z, M, a, b):
+    """
+    Miyamoto-Nagai potential in 3D.
+
+    Parameters
+    ----------
+    x, y, z : float or array
+        Cartesian coordinates
+    M : float
+        Mass
+    a : float
+        Radial scale length
+    b : float
+        Vertical scale height
+
+    Returns 
+    -------
+    Phi : float or array
+        Gravitational potential at (x, y, z)
+    """
+    R2 = x**2 + y**2
+    B = jnp.sqrt(z**2 + b**2)
+    denom = jnp.sqrt(R2 + (a + B)**2)
+    return - G * M / denom
+
 @jaxtyped(typechecker=typechecker)
 def disk_density(x, y, z, Sigma0, Rd, h, Rcut, n):
     """
@@ -182,94 +270,8 @@ def sersic_surface_density(x, y, Sigma0, bn, a, n):
 
     return Sigma0 * jnp.exp(-bn * (R / a) ** (1 / n))
 
-def plummer_potential(x, y, z, M, a):
-    """
-    Plummer potential in 3D.
 
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    M : float
-        Mass
-    a : float
-        Scale radius
 
-    Returns
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    r2 = x**2 + y**2 + z**2
-    return -G*M / jnp.sqrt(a**2 + r2)
-
-def isochrone_potential(x, y, z, M, a):
-    """
-    Isochrone potential in 3D.
-
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    M : float
-        Mass
-    a : float
-        Scale radius
-
-    Returns
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    r2 = x**2 + y**2 + z**2
-    return -M / (a + jnp.sqrt(r2 + a**2))
-
-def nfw_potential(x, y, z, M, a):
-    """
-    NFW potential in 3D.
-
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    M : float
-        Mass
-    a : float
-        Scale radius
-
-    Returns
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    r = jnp.sqrt(x**2 + y**2 + z**2)
-    r = jnp.maximum(r, 1e-6)  # avoid division by zero
-    return -M / r * jnp.log(1 + r / a)
-
-def miyamoto_nagai_potential(x, y, z, M, a, b):
-    """
-    Miyamoto-Nagai potential in 3D.
-
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    M : float
-        Mass
-    a : float
-        Radial scale length
-    b : float
-        Vertical scale height
-
-    Returns 
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    R2 = x**2 + y**2
-    B = jnp.sqrt(z**2 + b**2)
-    denom = jnp.sqrt(R2 + (a + B)**2)
-    return - G * M / denom
 
 def perfect_ellipsoid_density(x, y, z, M, a, q):
     """
