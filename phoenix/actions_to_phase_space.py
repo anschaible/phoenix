@@ -18,17 +18,29 @@ def actions_to_phase_space(Jr, Jz, Lz, params, key, Phi_xyz, theta):
     """
     Converts actions into phase-space coordinates.
     
-    Parameters:
-      - Jr: Radial action
-      - Jz: Vertical action
-      - Lz: Angular momentum along z
-      - params: Dictionary of parameters that must include at least:
-          * v0: Circular velocity (km/s)
-      - key: PRNGKey for random sampling
-    
-    Returns:
-      A tuple (x, y, z, v_x, v_y, v_z) representing the star's Cartesian coordinates
-      and velocity components.
+    Parameters
+    ----------
+    Jr : float
+        Radial action
+    Jz : float
+        Vertical action
+    Lz : float
+        Angular momentum about the z-axis
+    params : dict
+        Dictionary of parameters, must include 'R0' (initial guess for Rc)
+    key : jax.random.PRNGKey
+        Random key for sampling angles
+    Phi_xyz : Callable
+        Gravitational potential function Phi(x, y, z, *theta)
+    theta : tuple
+        Additional parameters for the potential   
+
+    Returns
+    -------
+    x, y, z : float
+        Cartesian positions
+    v_x, v_y, v_z : float
+        Cartesian velocities
     """
     R0 = params["R0"]
     #v0 = 200.0 #params["v0"]

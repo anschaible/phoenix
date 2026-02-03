@@ -4,138 +4,216 @@ import numpy as np
 import pytest
 from functools import partial
 
-# --- Import or Paste your function here ---
-# Assuming the function is in a module named 'dynamics'
-# from dynamics import Rc_from_Lz
+from phoenix.frequencies import (
+    Phi_Rz_from_xyz, 
+    vcirc, Omega, kappa, nu, 
+    Rc_from_Lz
+)
 
-# For this standalone example, I will define the missing dependency 
-# and the function itself so this block is runnable as-is.
+# ==========================================
+# 1. Define Analytic Potentials for Testing
+# ==========================================
 
-def _vcirc_scalar(Phi_xyz, R, *theta):
-    """Calculates circular velocity v_c = sqrt(R * dPhi/dR)."""
-    # Evaluate gradient at (x=R, y=0, z=0)
-    pos = jnp.array([R, 0.0, 0.0])
-    # argnums=0 takes grad w.r.t position vector
-    grad_phi = jax.grad(Phi_xyz, argnums=0)(pos, *theta)
-    dPhi_dR = grad_phi[0] 
-    return jnp.sqrt(jnp.maximum(0.0, R * dPhi_dR))
+def phi_harmonic(x, y, z, omega):
+    """
+    Harmonic Oscillator: Phi = 0.5 * omega^2 * r^2
+    Analytic predictions:
+      v_c   = omega * R
+      Omega = omega (constant)
+      kappa = 2 * omega
+      nu    = omega
+    """
+    return 0.5 * omega**2 * (x**2 + y**2 + z**2)
 
-def Rc_from_Lz(Phi_xyz, Lz, R_init, *theta):
-    # [PASTE YOUR FUNCTION CODE HERE]
-    # For the test to run immediately, I am replicating the core logic:
-    Lz = jnp.asarray(Lz); R_init = jnp.asarray(R_init)
-    theta = tuple(jnp.asarray(t) for t in theta)
-    shape = jnp.broadcast_shapes(Lz.shape, R_init.shape)
-    Lz_b = jnp.broadcast_to(Lz, shape).ravel()
-    R0   = jnp.clip(jnp.broadcast_to(R_init, shape), 1e-2).ravel()
-
-    def _g_scalar(Rs, Ls):
-        return Rs * _vcirc_scalar(Phi_xyz, Rs, *theta) - Ls
-
-    vg = jax.vmap(jax.value_and_grad(_g_scalar), in_axes=(0, 0))
-
-    def body(_, Rvec):
-        gR, dgR = vg(Rvec, Lz_b)
-        Rn = Rvec - gR / jnp.clip(dgR, 1e-12)
-        Rn = jnp.clip(Rn, 1e-3, 1e3 * jnp.maximum(1.0, R0))
-        return 0.7 * Rn + 0.3 * Rvec
-
-    R_sol = jax.lax.fori_loop(0, 30, body, R0)
-    return R_sol.reshape(shape)
-
-# --- Define Potentials for Testing ---
-
-def phi_harmonic(r_vec, omega):
-    """Harmonic Oscillator: Phi = 0.5 * omega^2 * r^2"""
-    r2 = jnp.sum(r_vec**2)
-    return 0.5 * omega**2 * r2
-
-def phi_kepler(r_vec, GM):
-    """Kepler Potential: Phi = -GM / r"""
-    r = jnp.linalg.norm(r_vec)
+def phi_kepler(x, y, z, GM):
+    """
+    Kepler Potential: Phi = -GM / r
+    Analytic predictions:
+      v_c   = sqrt(GM / R)
+      Omega = sqrt(GM / R^3)
+      kappa = Omega (1:1 resonance)
+      nu    = Omega (1:1 resonance)
+    """
+    r = jnp.sqrt(x**2 + y**2 + z**2 + 1e-30)
     return -GM / r
 
-# --- Tests ---
-
-def test_harmonic_oscillator_recovery():
+def phi_miyamoto_nagai(x, y, z, M, a, b):
     """
-    Case 1: Harmonic Oscillator
-    v_c = omega * R
-    L_z = R * v_c = omega * R^2  => R = sqrt(L_z / omega)
+    Miyamoto-Nagai Disk (Test for vertical frequency nu vs kappa)
+    Phi = -GM / sqrt(R^2 + (a + sqrt(z^2 + b^2))^2)
+    """
+    R2 = x**2 + y**2
+    return -M / jnp.sqrt(R2 + (a + jnp.sqrt(z**2 + b**2))**2)
+
+# ==========================================
+# 2. Test Wrapper Logic (Phi_Rz)
+# ==========================================
+
+def test_phi_rz_mapping():
+    """Verify cylindrical mapping ensures y=0 and passes z correctly."""
+    # Potential: 2x + 10y + 5z
+    def linear_pot(x, y, z): return 2*x + 10*y + 5*z
+    
+    R, z = 3.0, 4.0
+    # Expected: 2(3) + 10(0) + 5(4) = 6 + 0 + 20 = 26
+    res = Phi_Rz_from_xyz(linear_pot, R, z)
+    assert res == 26.0
+
+# ==========================================
+# 3. Test Frequencies (vcirc, Omega, kappa, nu)
+# ==========================================
+
+@pytest.mark.parametrize("R", [1.0, 5.0])
+def test_frequencies_harmonic(R):
+    """Check vcirc, Omega, kappa, nu for Harmonic Oscillator."""
+    omega_val = 2.0
+    
+    # Run functions
+    vc_calc = vcirc(phi_harmonic, R, omega_val)
+    Om_calc = Omega(phi_harmonic, R, omega_val)
+    ka_calc = kappa(phi_harmonic, R, omega_val)
+    nu_calc = nu(phi_harmonic, R, omega_val)
+
+    # Analytic Expectations
+    vc_true = omega_val * R
+    Om_true = omega_val
+    ka_true = 2.0 * omega_val
+    nu_true = omega_val
+
+    # Assertions
+    tol = 1e-5
+    np.testing.assert_allclose(vc_calc, vc_true, rtol=tol, err_msg="vcirc mismatch")
+    np.testing.assert_allclose(Om_calc, Om_true, rtol=tol, err_msg="Omega mismatch")
+    np.testing.assert_allclose(ka_calc, ka_true, rtol=tol, err_msg="kappa mismatch")
+    np.testing.assert_allclose(nu_calc, nu_true, rtol=tol, err_msg="nu mismatch")
+
+@pytest.mark.parametrize("R", [0.5, 2.0])
+def test_frequencies_kepler(R):
+    """Check vcirc, Omega, kappa, nu for Kepler Potential."""
+    GM = 1.5
+    
+    # Run functions
+    vc_calc = vcirc(phi_kepler, R, GM)
+    Om_calc = Omega(phi_kepler, R, GM)
+    ka_calc = kappa(phi_kepler, R, GM)
+    nu_calc = nu(phi_kepler, R, GM)
+    
+    # Analytic Expectations
+    vc_true = jnp.sqrt(GM / R)
+    Om_true = jnp.sqrt(GM / R**3)
+    ka_true = Om_true  # For point mass, kappa = Omega
+    nu_true = Om_true  # For point mass, nu = Omega
+
+    # Assertions
+    tol = 1e-5
+    np.testing.assert_allclose(vc_calc, vc_true, rtol=tol)
+    np.testing.assert_allclose(Om_calc, Om_true, rtol=tol)
+    np.testing.assert_allclose(ka_calc, ka_true, rtol=tol)
+    np.testing.assert_allclose(nu_calc, nu_true, rtol=tol)
+
+def test_nu_vs_kappa_disk():
+    """
+    In a flattened disk, nu (vertical) should generally be larger than Omega, 
+    and kappa (radial) should be distinct.
+    Using Miyamoto-Nagai.
+    """
+    M, a, b = 1.0, 1.0, 0.5
+    R = 1.0
+    
+    om_val = Omega(phi_miyamoto_nagai, R, M, a, b)
+    ka_val = kappa(phi_miyamoto_nagai, R, M, a, b)
+    nu_val = nu(phi_miyamoto_nagai, R, M, a, b)
+    
+    # Basic physical sanity checks for a disk
+    assert jnp.isfinite(om_val)
+    assert jnp.isfinite(ka_val)
+    assert jnp.isfinite(nu_val)
+    
+    # Ensure they are not all identical (as they are in Kepler/Harmonic)
+    assert abs(ka_val - nu_val) > 1e-3
+
+# ==========================================
+# 4. Test Vectorization (vmap behavior)
+# ==========================================
+
+def test_vectorization():
+    """Ensure all frequency functions handle arrays vs scalars."""
+    omega_val = 2.0
+    R_scalar = 1.0
+    R_array = jnp.array([1.0, 2.0, 3.0])
+    
+    # Test vcirc scalar
+    res_s = vcirc(phi_harmonic, R_scalar, omega_val)
+    assert res_s.ndim == 0
+    
+    # Test vcirc array
+    res_a = vcirc(phi_harmonic, R_array, omega_val)
+    assert res_a.shape == (3,)
+    np.testing.assert_allclose(res_a, R_array * omega_val)
+
+    # Test kappa array
+    res_k = kappa(phi_harmonic, R_array, omega_val)
+    assert res_k.shape == (3,)
+    np.testing.assert_allclose(res_k, 2.0 * omega_val)
+
+# ==========================================
+# 5. Test Rc_from_Lz (Inverse problem)
+# ==========================================
+
+def test_Rc_recovery_harmonic():
+    """
+    Recover Radius from Angular Momentum in Harmonic Pot.
+    Lz = R * vc = R * (omega * R) = omega * R^2
+    => R = sqrt(Lz / omega)
     """
     omega = 2.0
-    Lz_target = 16.0
-    expected_Rc = jnp.sqrt(Lz_target / omega) # sqrt(8) ~ 2.828
+    Lz = 8.0
+    R_expected = jnp.sqrt(Lz / omega) # 2.0
     
-    # Initial guess can be anything reasonable
-    R_guess = 1.0 
-    
-    rc = Rc_from_Lz(phi_harmonic, Lz_target, R_guess, omega)
-    
-    np.testing.assert_allclose(rc, expected_Rc, rtol=1e-5, 
-        err_msg="Failed to recover Rc for Harmonic Oscillator")
+    R_calc = Rc_from_Lz(phi_harmonic, Lz, 1.0, omega)
+    np.testing.assert_allclose(R_calc, R_expected, rtol=1e-5)
 
-def test_kepler_recovery():
+def test_Rc_recovery_kepler():
     """
-    Case 2: Kepler/Point Mass
-    v_c = sqrt(GM / R)
-    L_z = R * sqrt(GM/R) = sqrt(GM * R) => R = L_z^2 / GM
+    Recover Radius from Angular Momentum in Kepler Pot.
+    Lz = R * vc = R * sqrt(GM/R) = sqrt(GM*R)
+    => R = Lz^2 / GM
     """
     GM = 1.0
-    Lz_target = 3.0
-    expected_Rc = (Lz_target**2) / GM # 9.0
+    Lz = 2.0
+    R_expected = (Lz**2) / GM # 4.0
     
-    # Start guess far away to test convergence
-    R_guess = 0.5 
-    
-    rc = Rc_from_Lz(phi_kepler, Lz_target, R_guess, GM)
-    
-    np.testing.assert_allclose(rc, expected_Rc, rtol=1e-5,
-        err_msg="Failed to recover Rc for Kepler potential")
+    R_calc = Rc_from_Lz(phi_kepler, Lz, 1.0, GM)
+    np.testing.assert_allclose(R_calc, R_expected, rtol=1e-5)
 
-def test_broadcasting_shapes():
+def test_Rc_broadcasting():
     """
-    Case 3: Ensure scalar Lz broadcasts against array R_init (and vice versa)
-    and handles batch dimensions correctly.
+    Test Rc_from_Lz with array inputs for Lz and R_init.
     """
     omega = 1.0
-    # Lz = [1, 4, 9], Omega=1 => Expected R = [1, 2, 3]
-    Lz_array = jnp.array([1.0, 4.0, 9.0]) 
-    R_init_scalar = 1.5 # Single guess for all
+    # Lz = 1 -> R=1; Lz=4 -> R=2
+    Lzs = jnp.array([1.0, 4.0])
+    R_inits = jnp.array([0.5, 0.5]) 
     
-    rc = Rc_from_Lz(phi_harmonic, Lz_array, R_init_scalar, omega)
+    R_sol = Rc_from_Lz(phi_harmonic, Lzs, R_inits, omega)
     
-    assert rc.shape == (3,)
-    np.testing.assert_allclose(rc, jnp.array([1.0, 2.0, 3.0]), rtol=1e-5)
+    assert R_sol.shape == (2,)
+    np.testing.assert_allclose(R_sol, jnp.array([1.0, 2.0]), rtol=1e-4)
+
+# ==========================================
+# 6. Test JIT Compilation
+# ==========================================
 
 def test_jit_compilation():
-    """
-    Case 4: Ensure the function can be JIT compiled.
-    """
+    """Ensure the public functions can be JIT compiled."""
     omega = 1.0
-    Lz = 4.0
-    R_init = 1.0
+    R = 1.0
     
-    # Wrap in jit
-    jit_Rc = jax.jit(Rc_from_Lz, static_argnames=['Phi_xyz'])
+    # We must mark Phi_xyz as static because it's a callable
+    jit_vcirc = jax.jit(vcirc, static_argnames=['Phi_xyz'])
+    jit_kappa = jax.jit(kappa, static_argnames=['Phi_xyz'])
+    jit_Rc    = jax.jit(Rc_from_Lz, static_argnames=['Phi_xyz'])
     
-    # Run once to compile
-    res = jit_Rc(phi_harmonic, Lz, R_init, omega)
-    assert res.shape == () # Scalar check
-    np.testing.assert_allclose(res, 2.0, rtol=1e-5)
-
-def test_potential_parameter_passing():
-    """
-    Case 5: Ensure *theta args are passed through correctly to the potential.
-    Using Harmonic oscillator but varying omega via args.
-    """
-    Lz = 1.0
-    R_init = 1.0
-    
-    # Omega = 1.0 -> R = 1.0
-    rc1 = Rc_from_Lz(phi_harmonic, Lz, R_init, 1.0)
-    # Omega = 4.0 -> R = sqrt(1/4) = 0.5
-    rc2 = Rc_from_Lz(phi_harmonic, Lz, R_init, 4.0)
-    
-    np.testing.assert_allclose(rc1, 1.0)
-    np.testing.assert_allclose(rc2, 0.5)
+    assert jit_vcirc(phi_harmonic, R, omega) == 1.0
+    assert jit_kappa(phi_harmonic, R, omega) == 2.0
+    assert jit_Rc(phi_harmonic, 1.0, 1.0, omega) == 1.0
