@@ -64,11 +64,11 @@ def sample_df_potential(df, key, params, Phi_xyz, theta, n_candidates, envelope_
         Candidates (n_candidates, 3), weighted candidates (n_candidates, 3), and their soft acceptance weights (n_candidates,).
     """
     key, subkey = random.split(key)
-    Jr_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=400.0)
+    Jr_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=200.0)
     key, subkey = random.split(key)
-    Jz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=400.0)
+    Jz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=200.0)
     key, subkey = random.split(key)
-    Lz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=2000.0)
+    Lz_candidates = random.uniform(subkey, shape=(n_candidates,), minval=0.0, maxval=6000.0)
     
     candidates = jnp.stack([Jr_candidates, Jz_candidates, Lz_candidates], axis=1)
     

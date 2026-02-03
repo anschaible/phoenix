@@ -71,11 +71,11 @@ def test_sample_df_potential_reproducible_and_consistent():
     # reproduce internal random draws deterministically
     k = key
     k, sub = random.split(k)
-    Jr = random.uniform(sub, shape=(n,), minval=0.0, maxval=400.0)
+    Jr = random.uniform(sub, shape=(n,), minval=0.0, maxval=200.0)
     k, sub = random.split(k)
-    Jz = random.uniform(sub, shape=(n,), minval=0.0, maxval=400.0)
+    Jz = random.uniform(sub, shape=(n,), minval=0.0, maxval=200.0)
     k, sub = random.split(k)
-    Lz = random.uniform(sub, shape=(n,), minval=0.0, maxval=2000.0)
+    Lz = random.uniform(sub, shape=(n,), minval=0.0, maxval=6000.0)
     expected_candidates = jnp.stack([Jr, Jz, Lz], axis=1)
 
     k, sub = random.split(k)
