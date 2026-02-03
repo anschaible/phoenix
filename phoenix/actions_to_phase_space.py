@@ -66,7 +66,7 @@ def actions_to_phase_space(Jr, Jz, Lz, params, key, Phi_xyz, theta):
 
     #Dynamical frequencies
     Omega = vcirc(Phi_xyz, Rc_val, *theta) / Rc_val
-    dO_dR = grad(lambda r: vcirc(Phi_xyz, Rc_val, *theta) / r)(Rc_val)
+    dO_dR = grad(lambda r: vcirc(Phi_xyz, r, *theta) / r)(Rc_val)
     
     #Sample random angles uniformly in [0, 2π]
     key, subkey = random.split(key)

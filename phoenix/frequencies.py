@@ -7,7 +7,6 @@ from typing import Dict, Callable, Tuple
 import jax.numpy as jnp
 
 # ---------- axisymmetric Phi(R,z) wrapper ----------
-@jaxtyped
 def Phi_Rz_from_xyz(Phi_xyz: Callable, R: ArrayLike, z: ArrayLike, *theta: ArrayLike) -> Float[Array, "..."]:
     """
     Wrapper to evaluate an axisymmetric potential Phi(R,z) from a 3D potential Phi(x,y,z).
@@ -122,7 +121,6 @@ def _nu_scalar(Phi_xyz: Callable, R: Float[Array, ""], *theta: Array) -> Float[A
     return jnp.sqrt(jnp.clip(d2Phi_dz2, 1e-20))
 
 # ---------- public, vectorized wrappers ----------
-@jaxtyped
 def vcirc(Phi_xyz: Callable, R: ArrayLike, *theta: ArrayLike) -> Float[Array, "..."]:
     """
     Circular velocity vc at radius R.
@@ -145,7 +143,6 @@ def vcirc(Phi_xyz: Callable, R: ArrayLike, *theta: ArrayLike) -> Float[Array, ".
     f = lambda r: _vcirc_scalar(Phi_xyz, r, *theta)
     return jax.vmap(f)(R) if R.ndim else f(R)
 
-@jaxtyped
 def Omega(Phi_xyz: Callable, R: ArrayLike, *theta: ArrayLike) -> Float[Array, "..."]:
     """
     Circular frequency Omega at radius R.
@@ -168,7 +165,6 @@ def Omega(Phi_xyz: Callable, R: ArrayLike, *theta: ArrayLike) -> Float[Array, ".
     f = lambda r: _Omega_scalar(Phi_xyz, r, *theta)
     return jax.vmap(f)(R) if R.ndim else f(R)
 
-@jaxtyped
 def kappa(Phi_xyz: Callable, R: ArrayLike, *theta: ArrayLike) -> Float[Array, "..."]:
     """
     Radial epicyclic frequency kappa at radius R.
@@ -190,7 +186,6 @@ def kappa(Phi_xyz: Callable, R: ArrayLike, *theta: ArrayLike) -> Float[Array, ".
     f = lambda r: _kappa_scalar(Phi_xyz, r, *theta)
     return jax.vmap(f)(R) if R.ndim else f(R)
 
-@jaxtyped
 def nu(Phi_xyz: Callable, R: ArrayLike, *theta: ArrayLike) -> Float[Array, "..."]:
     """
     Vertical epicyclic frequency nu at radius R.
@@ -214,7 +209,6 @@ def nu(Phi_xyz: Callable, R: ArrayLike, *theta: ArrayLike) -> Float[Array, "..."
     return jax.vmap(f)(R) if R.ndim else f(R)
 
 # ---------- batched Newton solve for Rc(Lz) ----------
-@jaxtyped
 def Rc_from_Lz(Phi_xyz: Callable, Lz: ArrayLike, R_init: ArrayLike, *theta: ArrayLike) -> Float[Array, "..."]:
     """
     The guiding center radius Rc corresponding to angular momentum Lz.
