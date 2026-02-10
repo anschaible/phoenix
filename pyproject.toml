@@ -26,6 +26,10 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
+    "jax",
+    "beartype",
+    "jaxtyping",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]
