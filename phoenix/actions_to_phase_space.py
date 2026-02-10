@@ -108,12 +108,22 @@ def map_actions_to_phase_space(candidates, params, key, Phi_xyz, theta):
     Applies actions_to_phase_space to a batch of action candidates.
     
     Parameters:
-      - candidates: A JAX array of shape (N, 3) where each row is (Jr, Jz, Lz)
-      - params: Dictionary of parameters
-      - key: PRNGKey for random sampling
-      
+    ----------
+    candidates : array-like, shape (N, 3)
+        An array of action triplets (Jr, Jz, Lz) for N candidates.
+    params : dict
+        Dictionary of parameters for the potential and frequencies.
+    key : jax.random.PRNGKey
+        Random key for sampling angles.
+    Phi_xyz : Callable
+        Gravitational potential function Phi(x, y, z, *theta).
+    theta : tuple
+        Additional parameters for the potential.
+
     Returns:
-      A JAX array of shape (N, 6) where each row is (x, y, z, v_x, v_y, v_z).
+    -------
+    phase_space_coords : array, shape (N, 6)
+        An array of phase-space coordinates (x, y, z, v_x, v_y, v_z) for each candidate.
     """
     num = candidates.shape[0]
     keys = random.split(key, num)
