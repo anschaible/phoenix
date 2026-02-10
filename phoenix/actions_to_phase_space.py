@@ -8,6 +8,8 @@ The function is implemented with JAX and uses random sampling of the angles to
 generate a distribution of positions and velocities.
 """
 
+#Following the Galactic dynamics book by Binney
+
 import jax
 import jax.numpy as jnp
 from jax import random, vmap

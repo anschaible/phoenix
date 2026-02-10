@@ -6,6 +6,8 @@ from jaxtyping import Array, Float, jaxtyped
 from typing import Dict, Callable, Tuple
 import jax.numpy as jnp
 
+#Following the Galactic dynamics book by Binney
+
 # ---------- axisymmetric Phi(R,z) wrapper ----------
 def Phi_Rz_from_xyz(Phi_xyz: Callable, R: ArrayLike, z: ArrayLike, *theta: ArrayLike) -> Float[Array, "..."]:
     """
