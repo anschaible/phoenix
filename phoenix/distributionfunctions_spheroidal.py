@@ -10,7 +10,6 @@ import jax.numpy as jnp
 #https://github.com/GalacticDynamics-Oxford/Agama/tree/master/doc/reference.pdf
 
 # ---------- axisymmetric Phi(R,z) wrapper ----------
-@jaxtyped
 def Phi_Rz_from_xyz(Phi_xyz: Callable, R: ArrayLike, z: ArrayLike, *theta: ArrayLike) -> Float[Array, "..."]:
     R, z = jnp.asarray(R), jnp.asarray(z)
     theta = tuple(jnp.asarray(t) for t in theta)
