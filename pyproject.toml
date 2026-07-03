@@ -32,6 +32,7 @@ dependencies = [
     "matplotlib",
     "numpy",
     "h5py",
+    "flax",
 ]
 
 [project.optional-dependencies]
