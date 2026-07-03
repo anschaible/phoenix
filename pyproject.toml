@@ -30,6 +30,8 @@ dependencies = [
     "beartype",
     "jaxtyping",
     "matplotlib",
+    "numpy",
+    "h5py",
 ]
 
 [project.optional-dependencies]

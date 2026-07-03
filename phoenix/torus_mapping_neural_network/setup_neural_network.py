@@ -32,7 +32,7 @@ class TorusMappingSurrogate(nn.Module):
         x = nn.Dense(self.hidden_features)(x)
         x = nn.silu(x)
         for _ in range(self.num_blocks):
-            x = ResidualBlock(self.features=self.hidden_features)(x)
+            x = ResidualBlock(features=self.hidden_features)(x)
         x = nn.Dense(self.output_features)(x)
         return x
 
