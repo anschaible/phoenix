@@ -13,7 +13,7 @@ generate a distribution of positions and velocities.
 import jax
 import jax.numpy as jnp
 from jax import random, vmap
-from phoenix.frequencies import Rc_from_Lz, nu, vcirc, kappa
+from phoenix.distribution_functions.frequencies import Rc_from_Lz, nu, vcirc, kappa
 from jax import grad
 
 def actions_to_phase_space(Jr, Jz, Lz, params, key, Phi_xyz, theta):

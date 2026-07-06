@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from functools import partial
 
-from phoenix.frequencies import (
+from phoenix.distribution_functions.frequencies import (
     Phi_Rz_from_xyz, 
     vcirc, Omega, kappa, nu, 
     Rc_from_Lz

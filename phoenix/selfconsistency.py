@@ -2,8 +2,9 @@ import jax
 import jax.numpy as jnp
 import optax
 
+from phoenix.actions_to_phasespace import epicycle_approximation_actions_to_phase_space
 from phoenix.constants import G
-from phoenix import sampling, actions_to_phase_space
+from phoenix import sampling
 from phoenix.potentials import miyamoto_nagai_potential, plummer_potential
 from phoenix.distributionfunctions_spheroidal import f_double_power_law
 
@@ -84,7 +85,7 @@ def compute_laplacian_on_grid(potential, theta, r_bins, z_bins):
 
 def compute_loss(key, params, Phi, theta, n_candidates, envelope_max, rbin, zbin):
     candidates, samples, soft_weights = sampling.sample_df_potential(f_double_power_law, key, params, Phi, theta, n_candidates, envelope_max, tau=0.01)
-    phase_space_coords = actions_to_phase_space.map_actions_to_phase_space(samples, params, key, Phi, theta)
+    phase_space_coords = epicycle_approximation_actions_to_phase_space.map_actions_to_phase_space(samples, params, key, Phi, theta)
     x = phase_space_coords[:, 0]
     y = phase_space_coords[:, 1]
     z = phase_space_coords[:, 2]
@@ -97,7 +98,7 @@ def compute_loss(key, params, Phi, theta, n_candidates, envelope_max, rbin, zbin
 
 def compute_lossvalue(key, params, Phi, theta, n_candidates, envelope_max, rbin, zbin):
     candidates, samples, soft_weights = sampling.sample_df_potential(f_double_power_law, key, params, Phi, theta, n_candidates, envelope_max, tau=0.01)
-    phase_space_coords = actions_to_phase_space.map_actions_to_phase_space(samples, params, key, Phi, theta)
+    phase_space_coords = epicycle_approximation_actions_to_phase_space.map_actions_to_phase_space(samples, params, key, Phi, theta)
     x = phase_space_coords[:, 0]
     y = phase_space_coords[:, 1]
     z = phase_space_coords[:, 2]
