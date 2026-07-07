@@ -1,0 +1,44 @@
+>>> Script started at: Fri Jul  3 12:28:41 CEST 2026
+>>> Scanning for the 4 GPUs with the most free VRAM...
+>>> Reserving GPUs: 7,6,2,1
+>>> Activating Conda environment 'phoenix'...
+>>> Running setup_neural_network_multi_gpu.py...
+JAX successfully linked to 4 local devices: [CudaDevice(id=0), CudaDevice(id=1), CudaDevice(id=2), CudaDevice(id=3)]
+Partitioning master dataset indices (80/10/10 ratio)...
+Total Rows: 10,000,000
+  -> Training Split:   8,000,565
+  -> Validation Split: 1,000,842
+  -> Testing Split:    998,593
+Gathering ~1,000,000 training rows for normalization stats...
+Saved normalizer constraints to 'phoenix_norm_stats.npz'
+Replicating model network parameters across all devices...
+
+Initializing Distributed Training Run...
+Epoch 01/20 | Average Train MSE: 0.099888 | Average Val MSE: 0.030153
+Epoch 02/20 | Average Train MSE: 0.011981 | Average Val MSE: 0.016315
+Epoch 03/20 | Average Train MSE: 0.006901 | Average Val MSE: 0.011059
+Epoch 04/20 | Average Train MSE: 0.004854 | Average Val MSE: 0.008646
+Epoch 05/20 | Average Train MSE: 0.003745 | Average Val MSE: 0.006958
+Epoch 06/20 | Average Train MSE: 0.003005 | Average Val MSE: 0.005944
+Epoch 07/20 | Average Train MSE: 0.002486 | Average Val MSE: 0.004878
+Epoch 08/20 | Average Train MSE: 0.002159 | Average Val MSE: 0.004249
+Epoch 09/20 | Average Train MSE: 0.001833 | Average Val MSE: 0.004050
+Epoch 10/20 | Average Train MSE: 0.001690 | Average Val MSE: 0.003591
+Epoch 11/20 | Average Train MSE: 0.001457 | Average Val MSE: 0.003212
+Epoch 12/20 | Average Train MSE: 0.001336 | Average Val MSE: 0.002889
+Epoch 13/20 | Average Train MSE: 0.001243 | Average Val MSE: 0.002696
+Epoch 14/20 | Average Train MSE: 0.001126 | Average Val MSE: 0.002799
+Epoch 15/20 | Average Train MSE: 0.001071 | Average Val MSE: 0.002263
+Epoch 16/20 | Average Train MSE: 0.000997 | Average Val MSE: 0.002328
+Epoch 17/20 | Average Train MSE: 0.000962 | Average Val MSE: 0.001902
+Epoch 18/20 | Average Train MSE: 0.000888 | Average Val MSE: 0.001835
+Epoch 19/20 | Average Train MSE: 0.000849 | Average Val MSE: 0.001730
+Epoch 20/20 | Average Train MSE: 0.000805 | Average Val MSE: 0.001638
+
+Running unbiased validation over locked out Test Set...
+==> VERIFIED TEST SET LOSS (MSE): 0.001631
+
+Collapsing parallel parameters back into a unified weight topology...
+Export complete! Weights saved securely to 'phoenix_weights.msgpack'. Ready for local CPU deployment.
+>>> Pipeline finished successfully!
+>>> Script ended at: Fri Jul  3 12:33:39 CEST 2026

@@ -1,154 +1,7 @@
 import jax
 import jax.numpy as jnp
-from beartype import beartype as typechecker
-from jaxtyping import jaxtyped
 
-from phoenix.constants import G
-
-
-# follow Agama notes (https://github.com/GalacticDynamics-Oxford/Agama/blob/master/doc/reference.pdf)
-
-
-def plummer_potential(x, y, z, M, a):
-    """
-    Plummer potential in 3D.
-
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    M : float
-        Mass
-    a : float
-        Scale radius
-
-    Returns
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    r2 = x**2 + y**2 + z**2
-    return -G*M / jnp.sqrt(a**2 + r2)
-
-def isochrone_potential(x, y, z, M, a):
-    """
-    Isochrone potential in 3D.
-
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    M : float
-        Mass
-    a : float
-        Scale radius
-
-    Returns
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    r2 = x**2 + y**2 + z**2
-    return - G * M / (a + jnp.sqrt(r2 + a**2))
-
-def nfw_potential(x, y, z, M, a):
-    """
-    Navarro-Frenk-White potential in 3D.
-
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    M : float
-        Mass
-    a : float
-        Scale radius
-
-    Returns
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    r = jnp.sqrt(x**2 + y**2 + z**2)
-    r = jnp.maximum(r, 1e-6)  # avoid division by zero
-    return - G * M / r * jnp.log(1 + r / a)
-
-def miyamoto_nagai_potential(x, y, z, M, a, b):
-    """
-    Miyamoto-Nagai potential in 3D.
-
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    M : float
-        Mass
-    a : float
-        Radial scale length
-    b : float
-        Vertical scale height
-
-    Returns 
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    R2 = x**2 + y**2
-    B = jnp.sqrt(z**2 + b**2)
-    denom = jnp.sqrt(R2 + (a + B)**2)
-    return - G * M / denom
-
-def logarithmic_potential(x, y, z, v0, rcore, p, q):
-    """
-    Logarithmic potential in 3D with axis ratios.
-
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    v0 : float
-        Velocity
-    rcore : float
-        Scale radius
-    p : float
-        Axis ratio (y-axis)
-    q : float
-        Axis ratio (z-axis)
-    
-    Returns
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    rtilde2 = x**2 + (y / p)**2 + (z / q)**2
-    return 0.5 * v0**2 * jnp.log(rcore**2 + rtilde2)
-
-
-
-########################not used for now and therefore no tests exist so far###########################
-def harmonic_potential(x, y, z, Omega, p, q):
-    """
-    Harmonic potential in 3D with axis ratios.
-    
-    Parameters
-    ----------
-    x, y, z : float or array
-        Cartesian coordinates
-    Omega : float
-        Frequency
-    p : float
-        Axis ratio (y-axis)
-    q : float
-        Axis ratio (z-axis)
-    
-    Returns
-    -------
-    Phi : float or array
-        Gravitational potential at (x, y, z)
-    """
-    rtilde2 = x**2 + (y / p)**2 + (z / q)**2
-    return 0.5 * Omega**2 * rtilde2
-
+@jax.jit
 def disk_density(x, y, z, Sigma0, Rd, h, Rcut, n):
     """
     Compute the density ρ(R, z) of a generalized disk model.
@@ -209,10 +62,8 @@ def disk_density(x, y, z, Sigma0, Rd, h, Rcut, n):
 
     return Sigma0 * exp_term * fz
 
-def spheroid_density(x, y, z,
-                     rho0, a, alpha, beta, gamma,
-                     p, q,
-                     rcut, xi):
+@jax.jit
+def spheroid_density(x, y, z, rho0, a, alpha, beta, gamma, p, q, rcut, xi):
     """
     Generalized spheroidal density profile with axis ratios and cutoff.
 
@@ -240,7 +91,6 @@ def spheroid_density(x, y, z,
     rho : float or array
         Density at given coordinates
     """
-
     # Modified radius for axisymmetric ellipsoids
     rtilde = jnp.sqrt(x**2 + (y/p)**2 + (z/q)**2)
     ra = rtilde / a
@@ -252,10 +102,8 @@ def spheroid_density(x, y, z,
 
     return rho0 * core * outer * cutoff
 
-def nuker_cylindrical(x, y,
-                      Sigma0, a,
-                      alpha, beta, gamma,
-                      rcut, xi):
+@jax.jit
+def nuker_cylindrical(x, y, Sigma0, a, alpha, beta, gamma, rcut, xi):
     """
     Nuker profile in cylindrical geometry: R = sqrt(x² + y²)
 
@@ -279,7 +127,6 @@ def nuker_cylindrical(x, y,
     rho : float or array
         Surface density at (x, y)
     """
-
     # Cylindrical radius
     R = jnp.sqrt(x**2 + y**2)
     R = jnp.maximum(R, 1e-6)  # avoid divide-by-zero at R=0
@@ -291,6 +138,7 @@ def nuker_cylindrical(x, y,
 
     return Sigma0 * core * transition * cutoff
 
+@jax.jit
 def sersic_surface_density(x, y, Sigma0, bn, a, n):
     """
     Cylindrical 2D Sersic surface density profile (deprojected).
@@ -302,7 +150,7 @@ def sersic_surface_density(x, y, Sigma0, bn, a, n):
     Sigma0 : float
         Central surface density
     bn : float
-        ?
+        Normalization constant for Sersic profile
     a : float
         Scale radius (half-light radius)
     n : float
@@ -313,13 +161,13 @@ def sersic_surface_density(x, y, Sigma0, bn, a, n):
     Sigma : float or array
         Surface density Σ(x, y)
     """
-
     # Cylindrical radius
     R = jnp.sqrt(x**2 + y**2)
     R = jnp.maximum(R, 1e-6)
 
     return Sigma0 * jnp.exp(-bn * (R / a) ** (1 / n))
 
+@jax.jit
 def perfect_ellipsoid_density(x, y, z, M, a, q):
     """
     Perfect ellipsoid density profile in 3D.
@@ -345,6 +193,7 @@ def perfect_ellipsoid_density(x, y, z, M, a, q):
     norm = M / (jnp.pi**2 * q * a**3)
     return norm * (1 + rtilde2 / a**2) ** -2
 
+@jax.jit
 def dehnen_density(x, y, z, M, a, gamma, p, q):
     """
     Dehnen density profile in 3D with axis ratios.
@@ -358,7 +207,7 @@ def dehnen_density(x, y, z, M, a, gamma, p, q):
     a : float
         Scale radius
     gamma : float
-        ?
+        Inner slope parameter
     p : float
         Axis ratio (y-axis)
     q : float
@@ -369,12 +218,13 @@ def dehnen_density(x, y, z, M, a, gamma, p, q):
     rho : float or array
         Density at (x, y, z)
     """
-    rtilde= jnp.sqrt(x**2 + (y / p)**2 + (z / q)**2)
+    rtilde = jnp.sqrt(x**2 + (y / p)**2 + (z / q)**2)
     norm = M * (3 - gamma) / (4 * jnp.pi * p * q * a**3)
     term1 = (rtilde / a) ** (-gamma)
     term2 = (1 + rtilde / a) ** (gamma - 4)
     return norm * term1 * term2
 
+@jax.jit
 def ferrers_density(x, y, z, M, a, p, q):
     """
     Ferrers density profile in 3D with axis ratios.
@@ -400,8 +250,8 @@ def ferrers_density(x, y, z, M, a, p, q):
     rtilde2 = x**2 + (y / p)**2 + (z / q)**2
     rtilde = jnp.sqrt(rtilde2)
     norm = (105 * M) / (32 * jnp.pi * p * q * a**3)
-    profile = (1 - (rtilde / a)**2) ** 2
+    
+    # Ensure profile falls to 0 outside the ellipsoid (rtilde > a)
+    profile = jnp.where(rtilde < a, (1 - (rtilde / a)**2)**2, 0.0)
+    
     return norm * profile
-
-
-

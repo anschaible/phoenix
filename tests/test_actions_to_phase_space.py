@@ -28,7 +28,7 @@ def stub_nu(Phi, R, *theta):
     return v0 / R
 
 # --- 2. IMPORT AND PATCH ---
-from phoenix import actions_to_phase_space as dynamics
+from phoenix.actions_to_phasespace import epicycle_approximation_actions_to_phase_space as dynamics
 
 @pytest.fixture(autouse=True)
 def patch_physics(monkeypatch):
