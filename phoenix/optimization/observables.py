@@ -47,8 +47,12 @@ def generate_edge_on_maps(
     key = jax.random.PRNGKey(prng_seed)
     
     # Disk
+    # NOTE: envelope_max is intentionally NOT detached (no stop_gradient/float()) —
+    # it is itself a smooth function of disk_df_params/pot_params, and detaching it
+    # drops a real term from the total derivative, giving gradients that disagree
+    # with finite differences.
     test_disk = f_disc_from_params(10.0, 5.0, 2000.0, total_potential, (), disk_df_params)
-    env_max_disk = jax.lax.stop_gradient(test_disk) * 2.0
+    env_max_disk = test_disk * 2.0
     key, subkey = jax.random.split(key)
     cand_disk, w_disk = sample_df_potential(
         df=f_disc_from_params, key=subkey, params=disk_df_params, Phi_xyz=total_potential,
@@ -60,7 +64,7 @@ def generate_edge_on_maps(
 
     # Bulge
     test_bulge = spheroid_df_wrapper(1.0, 1.0, 1.0, total_potential, (), bulge_df_params)
-    env_max_bulge = jax.lax.stop_gradient(test_bulge) * 2.0
+    env_max_bulge = test_bulge * 2.0
     key, subkey = jax.random.split(key)
     cand_bulge, w_bulge = sample_df_potential(
         df=spheroid_df_wrapper, key=subkey, params=bulge_df_params, Phi_xyz=total_potential,
