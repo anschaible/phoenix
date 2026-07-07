@@ -91,7 +91,7 @@ class PhoenixMapper:
         - potentials: numpy array of shape (N, 7) -> [M_halo, R_halo, M_disk, R_disk, H_disk, M_bulge, R_bulge]
         
         Returns:
-        - phase_space: numpy array of shape (N, 6)
+        - phase_space: jax array of shape (N, 6)
         """
         # 1. Engineer Features
         sin_angles = jnp.sin(angles)
@@ -109,8 +109,7 @@ class PhoenixMapper:
         # 4. Un-normalize Outputs
         phase_space = (norm_preds * self.out_std) + self.out_mu
         
-        # Return as a standard NumPy array for easy handling
-        return np.array(phase_space)
+        return phase_space
 
 # ==============================================================================
 # 3. EXAMPLE USAGE

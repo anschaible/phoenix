@@ -21,10 +21,10 @@ def generate_edge_on_maps(
     disk_df_params: dict, 
     bulge_df_params: dict,
     N_disk: int = 100_000, 
-    N_bulge: int = 100_000,
-    grid_size: int = 30,
+    N_bulge: int = 50_000,
+    grid_size: int = 40,
     extent_x: float = 15.0,
-    extent_z: float = 10.0,
+    extent_z: float = 5.0,
     prng_seed: int = 42,
     soft_bin_h: float = None # Configurable smoothing bandwidth
 ):
@@ -48,7 +48,7 @@ def generate_edge_on_maps(
     
     # Disk
     test_disk = f_disc_from_params(10.0, 5.0, 2000.0, total_potential, (), disk_df_params)
-    env_max_disk = jax.lax.stop_gradient(test_disk) * 2.0
+    env_max_disk = float(test_disk) * 2.0 
     key, subkey = jax.random.split(key)
     cand_disk, w_disk = sample_df_potential(
         df=f_disc_from_params, key=subkey, params=disk_df_params, Phi_xyz=total_potential,
@@ -58,9 +58,10 @@ def generate_edge_on_maps(
     key, subkey = jax.random.split(key)
     angles_disk = jax.random.uniform(subkey, shape=(N_disk, 3), minval=0.0, maxval=2*jnp.pi)
 
-    # Bulge
+    # Bulge - FIX: Tighter J_bounds to heavily populate the dense central core!
+    # FIX: Evaluate envelope_max much deeper in the core (1.0) so weights scale properly.
     test_bulge = spheroid_df_wrapper(1.0, 1.0, 1.0, total_potential, (), bulge_df_params)
-    env_max_bulge = jax.lax.stop_gradient(test_bulge) * 2.0
+    env_max_bulge = float(test_bulge) * 2.0 
     key, subkey = jax.random.split(key)
     cand_bulge, w_bulge = sample_df_potential(
         df=spheroid_df_wrapper, key=subkey, params=bulge_df_params, Phi_xyz=total_potential,
@@ -109,9 +110,7 @@ def generate_edge_on_maps(
     vy_centered = jnp.concatenate([vy_raw[:N_disk] - avg_vy_disk, vy_raw[N_disk:] - avg_vy_bulge])
     vz_centered = jnp.concatenate([vz_raw[:N_disk] - avg_vz_disk, vz_raw[N_disk:] - avg_vz_bulge])
 
-    # Safety buffer of 0.05 prevents velocities from exploding near the origin;
-    # crucial here because the soft-binning kernel below smears any outlier
-    # velocity across the *entire* grid, not just one pixel like a histogram would.
+    # FIX: Safety buffer of 0.05 prevents velocities from exploding precisely at the origin
     R = jnp.maximum(jnp.sqrt(x_centered**2 + y_centered**2), 0.05)
     v_R = (x_centered * vx_centered + y_centered * vy_centered) / R
     v_phi = (x_centered * vy_centered - y_centered * vx_centered) / R
@@ -130,51 +129,30 @@ def generate_edge_on_maps(
     z_flip = jax.random.choice(subkey, jnp.array([1.0, -1.0]), shape=(N_disk + N_bulge,))
     z = z_centered * z_flip
 
-    # 7. Differentiable Soft-Binning (KDE)
-    dx = 2.0 * extent_x / grid_size
-    dz = 2.0 * extent_z / grid_size
-
-    # Default bandwidth is 0.25x the pixel width: wide enough to stay smooth/
-    # differentiable, narrow enough not to blur out the velocity sign-flip near
-    # the disk center or the density cusp at the bulge center.
-    if soft_bin_h is None:
-        soft_bin_h = jnp.maximum(dx, dz) * 0.25
-
-    # Define pixel centers
-    X_centers = jnp.linspace(-extent_x + dx/2, extent_x - dx/2, grid_size)
-    Z_centers = jnp.linspace(-extent_z + dz/2, extent_z - dz/2, grid_size)
-
-    # Vectorized broadcasting to shape: (grid_z, grid_x, N_particles)
-    # This evaluates the distance of EVERY star to EVERY pixel instantly
-    dz_arr = Z_centers[:, None, None] - z[None, None, :]
-    dx_arr = X_centers[None, :, None] - x[None, None, :]
-
-    dist_sq = dx_arr**2 + dz_arr**2
-    # Normalized 2D Gaussian kernel (density per unit area) times pixel area,
-    # so that summing over the whole grid recovers each star's weight exactly
-    # once (mass-conserving), matching the histogram convention.
-    kernel = (dx * dz) / (2.0 * jnp.pi * soft_bin_h**2) * jnp.exp(-0.5 * dist_sq / soft_bin_h**2)
-
-    # Apply soft acceptance weights and physical masses to the kernel
-    w_kernel = all_weights[None, None, :] * kernel
+    x_edges = jnp.linspace(-extent_x, extent_x, grid_size + 1)
+    z_edges = jnp.linspace(-extent_z, extent_z, grid_size + 1)
     
-    # Calculate Maps
-    mass_map = jnp.sum(w_kernel, axis=-1)
+    # Use 2D histograms to calculate sums in each bin (Non-differentiable spatial mask)
+    # jnp.histogram2d returns shape (grid_x, grid_z), so we transpose (.T) to get (grid_z, grid_x)
+    mass_map, _, _ = jnp.histogram2d(x, z, bins=[x_edges, z_edges], weights=all_weights)
+    mass_map = mass_map.T
+    
+    v_mom_map, _, _ = jnp.histogram2d(x, z, bins=[x_edges, z_edges], weights=all_weights * vy)
+    v_mom_map = v_mom_map.T
+    
+    v2_mom_map, _, _ = jnp.histogram2d(x, z, bins=[x_edges, z_edges], weights=all_weights * (vy**2))
+    v2_mom_map = v2_mom_map.T
     
     # Protect against Division-by-Zero in empty pixels
     mass_safe = jnp.maximum(mass_map, 1e-12)
     
-    # Differentiable Moment calculations
-    # Where mass is negligible (< 1e-5), return 0.0 to prevent gradient poisoning
-    v_rot_map = jnp.where(mass_map > 1e-5, jnp.sum(w_kernel * vy[None, None, :], axis=-1) / mass_safe, 0.0)
+    # Kinematic Moment calculations
+    # Where mass is negligible (< 1e-5), return 0.0 to prevent artifacting
+    v_rot_map = jnp.where(mass_map > 1e-5, v_mom_map / mass_safe, 0.0)
+    v2_map = jnp.where(mass_map > 1e-5, v2_mom_map / mass_safe, 0.0)
     
-    v2_map = jnp.where(mass_map > 1e-5, jnp.sum(w_kernel * (vy**2)[None, None, :], axis=-1) / mass_safe, 0.0)
     variance_map = v2_map - v_rot_map**2
     sigma_map = jnp.sqrt(jnp.maximum(variance_map, 1e-12))
-    
-    # Return edges for plotting consistency
-    x_edges = jnp.linspace(-extent_x, extent_x, grid_size + 1)
-    z_edges = jnp.linspace(-extent_z, extent_z, grid_size + 1)
 
     return {
         'mass': mass_map,
