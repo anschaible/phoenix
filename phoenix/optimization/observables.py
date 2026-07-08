@@ -13,62 +13,60 @@ def spheroid_df_wrapper(Jr, Jz, Jphi, Phi_xyz, theta, params):
     return f_double_power_law(Jr, Jz, Jphi, params)
 
 # ==============================================================================
-# MAIN OBSERVABLE FUNCTION
+# STAGE 1: SAMPLE THE DF AND MAP TO PHASE SPACE
 # ==============================================================================
-def generate_edge_on_maps(
-    mapper, 
-    pot_params: dict, 
-    disk_df_params: dict, 
+def sample_and_map_particles(
+    mapper,
+    pot_params: dict,
+    disk_df_params: dict,
     bulge_df_params: dict,
-    N_disk: int = 100_000, 
+    N_disk: int = 100_000,
     N_bulge: int = 100_000,
-    grid_size: int = 30,
-    extent_x: float = 15.0,
-    extent_z: float = 10.0,
     prng_seed: int = 42,
-    soft_bin_h: float = None # Configurable smoothing bandwidth
 ):
     """
-    Generates fully differentiable edge-on mass and kinematic maps using 
-    Gaussian Soft-Binning (KDE).
+    Samples the disk+bulge distribution functions in the given potential and maps
+    the resulting actions to phase space via the Phoenix surrogate.
+
+    Returns the (fully differentiable) tracer population: x, y, z, vy, weights.
+    vy is the line-of-sight velocity after re-randomizing the azimuthal angle
+    (assumes axisymmetry). y is kept (not just x, z) so that this population can
+    also be used directly for a 3D self-consistency check (see poisson_penalty.py).
     """
     # 1. Unpack Potential Parameters
     M_halo, a_halo = pot_params['M_halo'], pot_params['a_halo']
     M_disk, a_disk, b_disk = pot_params['M_disk'], pot_params['a_disk'], pot_params['b_disk']
     M_bulge, a_bulge = pot_params['M_bulge'], pot_params['a_bulge']
-    
+
     # 2. Define the Local Potential
     def total_potential(x, y, z):
-        return (nfw_potential(x, y, z, M_halo, a_halo) + 
-                miyamoto_nagai_potential(x, y, z, M_disk, a_disk, b_disk) + 
+        return (nfw_potential(x, y, z, M_halo, a_halo) +
+                miyamoto_nagai_potential(x, y, z, M_disk, a_disk, b_disk) +
                 plummer_potential(x, y, z, M_bulge, a_bulge))
 
     # 3. Differentiable Sampling
     key = jax.random.PRNGKey(prng_seed)
-    
+
     # Disk
-    # NOTE: envelope_max is intentionally NOT detached (no stop_gradient/float()) —
-    # it is itself a smooth function of disk_df_params/pot_params, and detaching it
-    # drops a real term from the total derivative, giving gradients that disagree
-    # with finite differences.
-    test_disk = f_disc_from_params(10.0, 5.0, 2000.0, total_potential, (), disk_df_params)
-    env_max_disk = test_disk * 2.0
+    # envelope_max=None -> the sampler auto-calibrates the rejection envelope from
+    # the candidates' own max DF value. This is essential for optimization from
+    # far-off starts: a fixed envelope computed at a single hard-coded action point
+    # underflows to zero when the DF parameters move, dividing by zero and poisoning
+    # everything with NaNs. Auto-calibration tracks the DF as the parameters change.
     key, subkey = jax.random.split(key)
     cand_disk, w_disk = sample_df_potential(
         df=f_disc_from_params, key=subkey, params=disk_df_params, Phi_xyz=total_potential,
-        theta=(), n_candidates=N_disk, envelope_max=env_max_disk, 
+        theta=(), n_candidates=N_disk, envelope_max=None,
         J_bounds=(100.0, 50.0, 3000.0), tau=0.05
     )
     key, subkey = jax.random.split(key)
     angles_disk = jax.random.uniform(subkey, shape=(N_disk, 3), minval=0.0, maxval=2*jnp.pi)
 
     # Bulge
-    test_bulge = spheroid_df_wrapper(1.0, 1.0, 1.0, total_potential, (), bulge_df_params)
-    env_max_bulge = test_bulge * 2.0
     key, subkey = jax.random.split(key)
     cand_bulge, w_bulge = sample_df_potential(
         df=spheroid_df_wrapper, key=subkey, params=bulge_df_params, Phi_xyz=total_potential,
-        theta=(), n_candidates=N_bulge, envelope_max=env_max_bulge, 
+        theta=(), n_candidates=N_bulge, envelope_max=None,
         J_bounds=(500.0, 500.0, 500.0), tau=0.05
     )
     key, subkey = jax.random.split(key)
@@ -81,7 +79,7 @@ def generate_edge_on_maps(
 
     all_candidates = jnp.vstack([cand_disk, cand_bulge])
     all_angles = jnp.vstack([angles_disk, angles_bulge])
-    
+
     # Scale potential params for the network
     nn_potentials = jnp.array([M_halo/1e11, a_halo, M_disk/1e11, a_disk, b_disk, M_bulge/1e11, a_bulge])
     potentials_batch = jnp.tile(nn_potentials, (N_disk + N_bulge, 1))
@@ -128,13 +126,29 @@ def generate_edge_on_maps(
     key, subkey = jax.random.split(key)
     phi_new = jax.random.uniform(subkey, shape=(N_disk + N_bulge,), minval=0.0, maxval=2*jnp.pi)
     x = R * jnp.cos(phi_new)
+    y = R * jnp.sin(phi_new)
     vy = v_R * jnp.sin(phi_new) + v_phi * jnp.cos(phi_new)
-    
+
     key, subkey = jax.random.split(key)
     z_flip = jax.random.choice(subkey, jnp.array([1.0, -1.0]), shape=(N_disk + N_bulge,))
     z = z_centered * z_flip
 
-    # 7. Differentiable Soft-Binning (KDE)
+    return x, y, z, vy, all_weights
+
+# ==============================================================================
+# STAGE 2: BIN THE TRACER POPULATION INTO EDGE-ON OBSERVABLE MAPS
+# ==============================================================================
+def bin_maps(
+    x, z, vy, all_weights,
+    grid_size: int = 30,
+    extent_x: float = 15.0,
+    extent_z: float = 10.0,
+    soft_bin_h: float = None,  # Configurable smoothing bandwidth
+):
+    """
+    Bins a tracer population (x, z, vy, weights) into differentiable edge-on
+    mass/kinematic maps using Gaussian Soft-Binning (KDE).
+    """
     dx = 2.0 * extent_x / grid_size
     dz = 2.0 * extent_z / grid_size
 
@@ -161,21 +175,21 @@ def generate_edge_on_maps(
 
     # Apply soft acceptance weights and physical masses to the kernel
     w_kernel = all_weights[None, None, :] * kernel
-    
+
     # Calculate Maps
     mass_map = jnp.sum(w_kernel, axis=-1)
-    
+
     # Protect against Division-by-Zero in empty pixels
     mass_safe = jnp.maximum(mass_map, 1e-12)
-    
+
     # Differentiable Moment calculations
     # Where mass is negligible (< 1e-5), return 0.0 to prevent gradient poisoning
     v_rot_map = jnp.where(mass_map > 1e-5, jnp.sum(w_kernel * vy[None, None, :], axis=-1) / mass_safe, 0.0)
-    
+
     v2_map = jnp.where(mass_map > 1e-5, jnp.sum(w_kernel * (vy**2)[None, None, :], axis=-1) / mass_safe, 0.0)
     variance_map = v2_map - v_rot_map**2
     sigma_map = jnp.sqrt(jnp.maximum(variance_map, 1e-12))
-    
+
     # Return edges for plotting consistency
     x_edges = jnp.linspace(-extent_x, extent_x, grid_size + 1)
     z_edges = jnp.linspace(-extent_z, extent_z, grid_size + 1)
@@ -187,3 +201,30 @@ def generate_edge_on_maps(
         'x_edges': x_edges,
         'z_edges': z_edges
     }
+
+# ==============================================================================
+# MAIN OBSERVABLE FUNCTION
+# ==============================================================================
+def generate_edge_on_maps(
+    mapper,
+    pot_params: dict,
+    disk_df_params: dict,
+    bulge_df_params: dict,
+    N_disk: int = 100_000,
+    N_bulge: int = 100_000,
+    grid_size: int = 30,
+    extent_x: float = 15.0,
+    extent_z: float = 10.0,
+    prng_seed: int = 42,
+    soft_bin_h: float = None # Configurable smoothing bandwidth
+):
+    """
+    Generates fully differentiable edge-on mass and kinematic maps using
+    Gaussian Soft-Binning (KDE).
+    """
+    x, y, z, vy, all_weights = sample_and_map_particles(
+        mapper, pot_params, disk_df_params, bulge_df_params,
+        N_disk=N_disk, N_bulge=N_bulge, prng_seed=prng_seed,
+    )
+    return bin_maps(x, z, vy, all_weights, grid_size=grid_size, extent_x=extent_x,
+                     extent_z=extent_z, soft_bin_h=soft_bin_h)

@@ -37,13 +37,13 @@ def soft_acceptance(df_vals: ArrayLike, rand_vals: ArrayLike, envelope_max: floa
 
 
 def sample_df_potential(
-    df: Callable, 
-    key: jax.Array, 
-    params: Dict, 
-    Phi_xyz: Callable, 
-    theta: tuple, 
-    n_candidates: int, 
-    envelope_max: float,
+    df: Callable,
+    key: jax.Array,
+    params: Dict,
+    Phi_xyz: Callable,
+    theta: tuple,
+    n_candidates: int,
+    envelope_max: float = None,
     J_bounds: Tuple[float, float, float] = (200.0, 200.0, 6000.0),
     tau: float = 0.01
 ) -> Tuple[jax.Array, jax.Array]:
@@ -66,8 +66,15 @@ def sample_df_potential(
         Additional parameters for the potential.
     n_candidates : int
         Number of candidate samples to generate.
-    envelope_max : float
-        Normalization factor (Maximum expected value of the DF in the sampled volume).
+    envelope_max : float, optional
+        Normalization factor (maximum expected value of the DF in the sampled
+        volume). If None (default), it is auto-calibrated as the maximum DF value
+        over the drawn candidates — the textbook rejection-sampling envelope.
+        This is far more robust than a fixed constant: a hand-picked envelope
+        computed from one fixed action point can underflow to zero when the DF
+        parameters shift (e.g. a far-off optimization start), which would make
+        `df_vals / envelope_max` divide by zero and poison everything downstream
+        with NaNs. Auto-calibration tracks the DF as the parameters move.
     J_bounds : tuple
         Maximum sampling boundaries for (J_r, J_z, L_z). Default is (200.0, 200.0, 6000.0).
     tau : float, optional
@@ -94,10 +101,16 @@ def sample_df_potential(
     # Evaluate the total DF for each candidate using vmap (Removed the inner 'jit')
     df_vmap = vmap(lambda c: df(c[0], c[1], c[2], Phi_xyz, theta, params))
     df_vals = df_vmap(candidates)
-    
+
+    # Auto-calibrate the envelope from the candidates' own maximum DF value when
+    # not supplied. Floored away from zero so an all-but-vanishing DF can never
+    # cause a division-by-zero (NaN) in soft_acceptance.
+    if envelope_max is None:
+        envelope_max = jnp.maximum(jnp.max(df_vals), 1e-30)
+
     # Generate uniform random numbers for rejection comparison
     rand_vals = random.uniform(krand, shape=(n_candidates,))
-    
+
     # Compute the soft acceptance weights
     soft_weights = soft_acceptance(df_vals, rand_vals, envelope_max, tau)
     

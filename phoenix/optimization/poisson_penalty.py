@@ -39,22 +39,24 @@ def get_density_from_potential(potential_fn: Callable, G: float = G_phoenix):
         
     return rho_fn
 
-# We use static_argnums=(4,) so JAX knows the potential function won't change between calls
-@functools.partial(jax.jit, static_argnums=(4,))
+# static_argnums=(4, 8): potential_fn and the shape_only flag control tracing/
+# control-flow, so JAX must treat them as compile-time constants.
+@functools.partial(jax.jit, static_argnums=(4, 8))
 def compute_poisson_penalty(
-    x: jax.Array, 
-    y: jax.Array, 
-    z: jax.Array, 
-    weights: jax.Array, 
-    potential_fn: Callable, 
+    x: jax.Array,
+    y: jax.Array,
+    z: jax.Array,
+    weights: jax.Array,
+    potential_fn: Callable,
     potential_params: tuple,
     G: float = G_phoenix,
-    h: float = 0.8
+    h: float = 0.8,
+    shape_only: bool = True,
 ) -> float:
     """
-    Computes a differentiable penalty forcing the Neural Network's mapped DF density 
+    Computes a differentiable penalty forcing the Neural Network's mapped DF density
     to match the exact density generating the potential (via the Poisson equation).
-    
+
     Parameters:
     -----------
     x, y, z : JAX arrays from the Neural Network mapped phase-space
@@ -63,34 +65,52 @@ def compute_poisson_penalty(
     potential_params : Tuple of parameters to pass to the potential function
     G : float, Gravitational constant (default 1.0 for Agama units)
     h : float, bandwidth of the Gaussian KDE
+    shape_only : bool, if True (default) compare only the *shape* of the log-density
+        profiles, subtracting the mean log-offset on each of the radial and vertical
+        profiles before squaring. This removes a systematic bias: the fixed-bandwidth
+        KDE estimate of the tracer density sits ~1 dex below the exact analytic
+        (Laplacian) density even at the true, self-consistent parameters, so an
+        absolute log comparison has a large non-zero floor there and its minimum is
+        NOT at the truth — it actively pulls a fit off-target (worst from far-off
+        starts). Comparing shape only makes the penalty insensitive to that constant
+        offset. The overall mass normalization is already constrained by the data
+        mass-map, so nothing is lost. Set False to recover the original absolute
+        (shape + normalization) penalty.
     """
-    
+
     # 1. Define physical anchor points to check the density
     R_anchors = jnp.linspace(1.0, 15.0, 15)  # 1 to 15 kpc radially
     Z_anchors = jnp.linspace(0.5, 5.0, 10)   # 0.5 to 5 kpc vertically
-    
+
     # 2. Calculate DF density at the anchor points (using KDE on mapped particles)
     vmap_kde = jax.vmap(_single_point_kde, in_axes=(0, 0, 0, None, None, None, None, None))
-    
+
     # Radial checking (z=0)
     df_rho_R = vmap_kde(R_anchors, jnp.zeros_like(R_anchors), jnp.zeros_like(R_anchors), x, y, z, weights, h)
     # Vertical checking (x=8 kpc, moving up in z)
     df_rho_Z = vmap_kde(jnp.full_like(Z_anchors, 8.0), jnp.zeros_like(Z_anchors), Z_anchors, x, y, z, weights, h)
-    
+
     # 3. Calculate True Physics Density directly from the Potential!
     rho_fn = get_density_from_potential(potential_fn, G)
-    
+
     analytic_rho_R = jax.vmap(lambda r: rho_fn(r, 0.0, 0.0, *potential_params))(R_anchors)
     analytic_rho_Z = jax.vmap(lambda z_val: rho_fn(8.0, 0.0, z_val, *potential_params))(Z_anchors)
-    
+
     # 4. Density Shape Penalty
-    # Using Log10 to handle exponential drop-offs smoothly. 
-    # Because we check the absolute magnitude of log10(rho), this automatically 
-    # forces both the SHAPE and the TOTAL MASS to align!
+    # Using Log10 to handle exponential drop-offs smoothly.
     eps = 1e-10
-    profile_penalty_R = jnp.mean(jnp.square(jnp.log10(df_rho_R + eps) - jnp.log10(analytic_rho_R + eps)))
-    profile_penalty_Z = jnp.mean(jnp.square(jnp.log10(df_rho_Z + eps) - jnp.log10(analytic_rho_Z + eps)))
-    
+    diff_R = jnp.log10(df_rho_R + eps) - jnp.log10(analytic_rho_R + eps)
+    diff_Z = jnp.log10(df_rho_Z + eps) - jnp.log10(analytic_rho_Z + eps)
+
+    if shape_only:
+        # Remove the mean log-offset -> penalize profile SHAPE only, independent of
+        # the (KDE-biased) absolute normalization.
+        diff_R = diff_R - jnp.mean(diff_R)
+        diff_Z = diff_Z - jnp.mean(diff_Z)
+
+    profile_penalty_R = jnp.mean(jnp.square(diff_R))
+    profile_penalty_Z = jnp.mean(jnp.square(diff_Z))
+
     total_penalty = profile_penalty_R + profile_penalty_Z
-    
+
     return total_penalty
