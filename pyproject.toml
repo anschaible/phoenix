@@ -55,9 +55,11 @@ docs = [
 # options. For a full reference of available options, check the overview
 # at https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html
 [tool.setuptools]
-packages = [
-    "phoenix",
-]
+packages = { find = {} }
+include-package-data = true
+
+[tool.setuptools.package-data]
+"phoenix.torus_mapping_neural_network" = ["*.npz", "*.msgpack"]
 
 # The following is the configuration for the pytest test suite
 [tool.pytest.ini_options]

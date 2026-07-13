@@ -167,6 +167,8 @@ def make_loss_fn(
     N_disk: int = 5_000, N_bulge: int = 5_000, grid_size: int = 16,
     extent_x: float = 15.0, extent_z: float = 10.0, prng_seed: int = 123,
     loss_weights=(1.0, 1.0, 1.0, 0.1), poisson_kwargs: dict = None,
+    spheroid_corotation: float = 0.5,
+    reg_weight: float = 0.0, reg_center_log: dict = None,
 ):
     """
     Builds a scalar loss(params_log) -> (loss, aux) closure combining:
@@ -186,9 +188,21 @@ def make_loss_fn(
     with a wide bandwidth the model and observed maps overlap even when the model
     galaxy starts far off, giving the masked log-mass term a non-vanishing
     gradient; shrinking it later recovers sharp maps. `None` uses bin_maps' default.
+
+    `reg_weight` adds a Tikhonov (ridge) prior penalty
+        reg_weight * mean_i (log p_i - log p_ref_i)^2
+    over all parameters, pulling them in log-space toward the reference values
+    `reg_center_log` (a params_log pytree; typically the physically-motivated
+    initial guess). This is a MAP prior: data-constrained parameters barely move,
+    but degenerate ones (bulge DF shape, DF normalizations) are anchored to sane
+    values instead of drifting to their bounds — which is what makes an
+    otherwise map-matching fit look unphysical.
     """
     poisson_kwargs = dict(poisson_kwargs or {})
     w_mass, w_vrot, w_sigma, w_poisson = loss_weights
+    if reg_weight > 0 and reg_center_log is not None:
+        from jax.flatten_util import ravel_pytree
+        reg_center_vec, _ = ravel_pytree(reg_center_log)
 
     def loss_fn(params_log, soft_bin_h=None):
         pot_params, disk_df_params, bulge_df_params = log_to_params(params_log)
@@ -196,6 +210,7 @@ def make_loss_fn(
         x, y, z, vy, w = sample_and_map_particles(
             mapper, pot_params, disk_df_params, bulge_df_params,
             N_disk=N_disk, N_bulge=N_bulge, prng_seed=prng_seed,
+            spheroid_corotation=spheroid_corotation,
         )
         model_maps = bin_maps(x, z, vy, w, grid_size=grid_size, extent_x=extent_x,
                               extent_z=extent_z, soft_bin_h=soft_bin_h)
@@ -206,9 +221,17 @@ def make_loss_fn(
         )
 
         loss = w_mass * mass_loss + w_vrot * vrot_loss + w_sigma * sigma_loss + w_poisson * poisson_penalty
+
+        reg = 0.0
+        if reg_weight > 0 and reg_center_log is not None:
+            from jax.flatten_util import ravel_pytree
+            u_vec, _ = ravel_pytree(params_log)
+            reg = reg_weight * jnp.mean((u_vec - reg_center_vec) ** 2)
+            loss = loss + reg
+
         aux = {
             'mass_loss': mass_loss, 'vrot_loss': vrot_loss, 'sigma_loss': sigma_loss,
-            'poisson_penalty': poisson_penalty, 'model_maps': model_maps,
+            'poisson_penalty': poisson_penalty, 'reg': reg, 'model_maps': model_maps,
         }
         return loss, aux
 
@@ -227,12 +250,19 @@ def fit(
     learning_rate: float = 0.02, n_steps: int = 300, grad_clip_norm: float = 1.0,
     param_bounds: dict = None,
     anneal_bandwidth=None,
+    spheroid_corotation: float = 0.5,
+    reg_weight: float = 0.0, reg_center_log: dict = None,
 ):
     """
     Fits pot_params/disk_df_params/bulge_df_params to `obs_maps` via Adam on the
     combined data-fit + Poisson self-consistency loss. Returns the fitted
     parameters and a history dict (per-iteration losses and parameter values)
     for diagnostics/plotting.
+
+    `reg_weight` > 0 adds a Tikhonov prior penalty in log-space toward
+    `reg_center_log` (default: the initial guess) — see make_loss_fn. Use it to
+    keep the degenerate parameters physically sensible instead of letting them
+    drift to their bounds.
 
     Two stabilizers are applied every step, both needed in practice:
       - Gradients are clipped by global norm before the Adam update: near a sharp
@@ -257,10 +287,16 @@ def fit(
         gradient pulling the model toward the data; shrinking it recovers a sharp
         final fit. If None (default), the loss uses bin_maps' fixed default bandwidth.
     """
+    # default the regularization anchor to the (physically-motivated) initial guess
+    if reg_weight > 0 and reg_center_log is None:
+        reg_center_log = params_to_log(init_pot_params, init_disk_df_params, init_bulge_df_params)
+
     loss_fn = make_loss_fn(
         mapper, obs_maps, N_disk=N_disk, N_bulge=N_bulge, grid_size=grid_size,
         extent_x=extent_x, extent_z=extent_z, prng_seed=prng_seed,
         loss_weights=loss_weights, poisson_kwargs=poisson_kwargs,
+        spheroid_corotation=spheroid_corotation,
+        reg_weight=reg_weight, reg_center_log=reg_center_log,
     )
 
     if anneal_bandwidth is not None:
@@ -287,7 +323,7 @@ def fit(
         return params_log, opt_state, loss, aux
 
     history = {
-        'loss': [], 'mass_loss': [], 'vrot_loss': [], 'sigma_loss': [], 'poisson_penalty': [],
+        'loss': [], 'mass_loss': [], 'vrot_loss': [], 'sigma_loss': [], 'poisson_penalty': [], 'reg': [],
         'pot_params': [], 'disk_df_params': [], 'bulge_df_params': [],
     }
 
@@ -300,6 +336,7 @@ def fit(
         history['vrot_loss'].append(float(aux['vrot_loss']))
         history['sigma_loss'].append(float(aux['sigma_loss']))
         history['poisson_penalty'].append(float(aux['poisson_penalty']))
+        history['reg'].append(float(aux['reg']))
         history['pot_params'].append({k: float(v) for k, v in pot_params.items()})
         history['disk_df_params'].append({k: float(v) for k, v in disk_df_params.items()})
         history['bulge_df_params'].append({k: float(v) for k, v in bulge_df_params.items()})
@@ -376,3 +413,157 @@ def fit_multistart(
     best['final_losses'] = final_losses
     best['best_index'] = best_index
     return best
+
+
+# ==============================================================================
+# VARIATIONAL INFERENCE (mean-field Gaussian posterior over log-parameters)
+# ==============================================================================
+def fit_vi(
+    mapper, obs_maps: dict,
+    init_pot_params: dict, init_disk_df_params: dict, init_bulge_df_params: dict,
+    N_disk: int = 5_000, N_bulge: int = 5_000, grid_size: int = 16,
+    extent_x: float = 15.0, extent_z: float = 10.0, prng_seed: int = 123,
+    use_terms=('v_rot', 'sigma'), noise_v: float = 10.0, noise_sigma: float = 10.0,
+    spheroid_corotation: float = 0.5, soft_bin_h: float = None, mass_floor: float = 1e-3,
+    prior_log_std: float = 2.0, init_post_std: float = 0.05,
+    n_mc: int = 4, learning_rate: float = 0.02, n_steps: int = 400, vi_seed: int = 0,
+    param_bounds: dict = None,
+):
+    """
+    Approximate the Bayesian posterior over the (log-)parameters with a mean-field
+    Gaussian, fitted by maximizing the ELBO (stochastic VI + reparameterization).
+    Where `fit` returns a single best-fit point, this returns a *distribution* —
+    a posterior mean and 1-sigma uncertainty for every parameter — which is what
+    actually matters given the strong parameter degeneracies (well-constrained
+    parameters get tight posteriors; degenerate ones come out broad).
+
+    Model:
+      - unconstrained variables u = log(params) (same log-space as `fit`);
+      - Gaussian likelihood on the kinematic maps: for each term in `use_terms`,
+        chi2 = sum_pixels (model - obs)^2 / noise^2 over the observed footprint,
+        log L = -0.5 * chi2. `noise_v`/`noise_sigma` are the assumed per-pixel
+        measurement errors (km/s) and set the scale of the posterior width;
+      - a broad Gaussian prior on u centred at the initial guess (weak, width
+        `prior_log_std` in log-space) to keep parameters in a sane range;
+      - variational posterior q(u) = N(mu, diag(sigma^2)), sigma = softplus(rho).
+
+    The DF-sampling PRNG seed is fixed across the whole run (common random numbers),
+    so the likelihood is a smooth deterministic function of u — essential for
+    low-variance reparameterization gradients. Initialise `mu` at (or near) the
+    point-estimate MAP for a clean local posterior.
+
+    Returns a dict with per-parameter posterior means/stds (physical units, via the
+    log-normal transform), the raw log-space mu/sigma, and the ELBO history.
+    """
+    from jax.flatten_util import ravel_pytree
+
+    use_v = 'v_rot' in use_terms
+    use_s = 'sigma' in use_terms
+    obs_v = jnp.asarray(obs_maps['v_rot'])
+    obs_s = jnp.asarray(obs_maps['sigma'])
+    mask = jnp.asarray(obs_maps['mass']) > mass_floor
+
+    def data_loglik(params_log):
+        pot_params, disk_df_params, bulge_df_params = log_to_params(params_log)
+        x, y, z, vy, w = sample_and_map_particles(
+            mapper, pot_params, disk_df_params, bulge_df_params,
+            N_disk=N_disk, N_bulge=N_bulge, prng_seed=prng_seed,
+            spheroid_corotation=spheroid_corotation,
+        )
+        m = bin_maps(x, z, vy, w, grid_size=grid_size, extent_x=extent_x,
+                     extent_z=extent_z, soft_bin_h=soft_bin_h)
+        ll = 0.0
+        if use_v:
+            ll = ll - 0.5 * jnp.sum(jnp.where(mask, (m['v_rot'] - obs_v) ** 2, 0.0)) / noise_v ** 2
+        if use_s:
+            ll = ll - 0.5 * jnp.sum(jnp.where(mask, (m['sigma'] - obs_s) ** 2, 0.0)) / noise_sigma ** 2
+        return ll
+
+    # flatten the parameter pytree to a vector for the VI algebra
+    mu0_tree = params_to_log(init_pot_params, init_disk_df_params, init_bulge_df_params)
+    mu0_vec, unravel = ravel_pytree(mu0_tree)
+    prior_mean = mu0_vec
+    D = mu0_vec.shape[0]
+
+    # Optional physical support: clip each sampled parameter to its log-bounds
+    # before evaluating the model. Without this a wide variational sample can push
+    # a parameter into a regime where the sampler/surrogate returns non-finite
+    # values and the ELBO goes NaN; clipping makes the posterior a truncated
+    # Gaussian on the physical range and keeps VI stable.
+    if param_bounds is not None:
+        log_lo_tree, log_hi_tree = log_bounds_tree(mu0_tree, param_bounds)
+        log_lo_vec, _ = ravel_pytree(log_lo_tree)
+        log_hi_vec, _ = ravel_pytree(log_hi_tree)
+    else:
+        log_lo_vec = log_hi_vec = None
+
+    def logjoint(u_vec):
+        if log_lo_vec is not None:
+            u_vec = jnp.clip(u_vec, log_lo_vec, log_hi_vec)
+        lp = -0.5 * jnp.sum(((u_vec - prior_mean) / prior_log_std) ** 2) - D * jnp.log(prior_log_std) \
+             - 0.5 * D * jnp.log(2 * jnp.pi)
+        return data_loglik(unravel(u_vec)) + lp
+
+    def neg_elbo(vi_params, eps):
+        mu, rho = vi_params['mu'], vi_params['rho']
+        sigma = jax.nn.softplus(rho)
+        # reparameterized MC estimate of E_q[logjoint]; loop over samples (low memory)
+        lj = 0.0
+        for k in range(n_mc):
+            lj = lj + logjoint(mu + sigma * eps[k])
+        lj = lj / n_mc
+        entropy = jnp.sum(jnp.log(sigma) + 0.5 * (1.0 + jnp.log(2 * jnp.pi)))
+        return -(lj + entropy)
+
+    rho0 = jnp.full((D,), jnp.log(jnp.expm1(init_post_std)))  # softplus^{-1}(init_post_std)
+    vi_params = {'mu': mu0_vec, 'rho': rho0}
+    optimizer = optax.chain(optax.clip_by_global_norm(5.0), optax.adam(learning_rate))
+    opt_state = optimizer.init(vi_params)
+
+    @jax.jit
+    def step(vi_params, opt_state, key):
+        eps = jax.random.normal(key, (n_mc, D))
+        loss, grads = jax.value_and_grad(neg_elbo)(vi_params, eps)
+        # NaN-safe: a bad MC sample can produce non-finite grads; zero them so one
+        # unlucky draw can't poison the whole run (belt-and-braces with the
+        # sample clipping above).
+        grads = jax.tree_util.tree_map(lambda g: jnp.nan_to_num(g, nan=0.0, posinf=0.0, neginf=0.0), grads)
+        updates, opt_state = optimizer.update(grads, opt_state, vi_params)
+        vi_params = optax.apply_updates(vi_params, updates)
+        return vi_params, opt_state, loss
+
+    key = jax.random.PRNGKey(vi_seed)
+    elbo_hist = []
+    for _ in range(n_steps):
+        key, sub = jax.random.split(key)
+        vi_params, opt_state, loss = step(vi_params, opt_state, sub)
+        elbo_hist.append(float(-loss))
+
+    mu = vi_params['mu']
+    sigma = np.asarray(jax.nn.softplus(vi_params['rho']))
+    mu_np = np.asarray(mu)
+    # posterior mean/std in physical units (log-normal): median exp(mu),
+    # and +/-1sigma band exp(mu +/- sigma).
+    mu_tree = unravel(jnp.asarray(mu_np))
+    sig_tree = unravel(jnp.asarray(sigma))
+    posterior = {}
+    for group in ('pot', 'disk', 'bulge'):
+        posterior[group] = {}
+        for kk in mu_tree[group]:
+            m_log = float(mu_tree[group][kk]); s_log = float(sig_tree[group][kk])
+            posterior[group][kk] = {
+                'median': float(np.exp(m_log)),
+                'lo': float(np.exp(m_log - s_log)),
+                'hi': float(np.exp(m_log + s_log)),
+                'log_std': s_log,   # ~ fractional uncertainty
+            }
+
+    pot_params, disk_df_params, bulge_df_params = log_to_params(mu_tree)
+    return {
+        'posterior': posterior,
+        'pot_params': {k: float(v) for k, v in pot_params.items()},
+        'disk_df_params': {k: float(v) for k, v in disk_df_params.items()},
+        'bulge_df_params': {k: float(v) for k, v in bulge_df_params.items()},
+        'mu_log': mu_tree, 'sigma_log': sig_tree,
+        'elbo_hist': elbo_hist,
+    }
