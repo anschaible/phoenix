@@ -6,15 +6,12 @@ from phoenix.distribution_functions.disk import f_disc_from_params
 from phoenix.distribution_functions.spheroid import f_double_power_law
 from phoenix.potentials.potentials import nfw_potential, plummer_potential, miyamoto_nagai_potential
 
-# ==============================================================================
+
 # HELPER FUNCTIONS
-# ==============================================================================
 def spheroid_df_wrapper(Jr, Jz, Jphi, Phi_xyz, theta, params):
     return f_double_power_law(Jr, Jz, Jphi, params)
 
-# ==============================================================================
-# STAGE 1: SAMPLE THE DF AND MAP TO PHASE SPACE
-# ==============================================================================
+
 def sample_and_map_particles(
     mapper,
     pot_params: dict,
@@ -23,6 +20,7 @@ def sample_and_map_particles(
     N_disk: int = 100_000,
     N_bulge: int = 100_000,
     prng_seed: int = 42,
+    spheroid_corotation: float = 0.5,
 ):
     """
     Samples the disk+bulge distribution functions in the given potential and maps
@@ -32,6 +30,16 @@ def sample_and_map_particles(
     vy is the line-of-sight velocity after re-randomizing the azimuthal angle
     (assumes axisymmetry). y is kept (not just x, z) so that this population can
     also be used directly for a 3D self-consistency check (see poisson_penalty.py).
+
+    spheroid_corotation : fraction of bulge/spheroid orbits assigned PROGRADE
+        (co-rotating with the disk). The double-power-law spheroid DF is even in
+        J_phi, so a sign must be assigned to each bulge orbit's azimuthal motion.
+        0.5 (default) => equal prograde/retrograde => a non-rotating,
+        pressure-supported spheroid. 1.0 => a fully co-rotating central component.
+        Real disk galaxies often have a (partially) rotating central component, so
+        for a strongly rotating galaxy the default zero-net-rotation spheroid both
+        dilutes the central rotation signal and injects Monte-Carlo scatter into
+        the inner v_rot map; raise this toward 1.0 in that case.
     """
     # 1. Unpack Potential Parameters
     M_halo, a_halo = pot_params['M_halo'], pot_params['a_halo']
@@ -89,108 +97,120 @@ def sample_and_map_particles(
     x_raw, y_raw, z_raw = phase_space[:, 0], phase_space[:, 1], phase_space[:, 2]
     vx_raw, vy_raw, vz_raw = phase_space[:, 3], phase_space[:, 4], phase_space[:, 5]
 
-    # 6. Center and Symmetrize (Fully JAX compatible)
-    avg_x_disk = jnp.sum(x_raw[:N_disk] * w_disk_scaled) / jnp.sum(w_disk_scaled)
-    avg_y_disk = jnp.sum(y_raw[:N_disk] * w_disk_scaled) / jnp.sum(w_disk_scaled)
-    avg_z_disk = jnp.sum(z_raw[:N_disk] * w_disk_scaled) / jnp.sum(w_disk_scaled)
-    avg_vx_disk = jnp.sum(vx_raw[:N_disk] * w_disk_scaled) / jnp.sum(w_disk_scaled)
-    avg_vy_disk = jnp.sum(vy_raw[:N_disk] * w_disk_scaled) / jnp.sum(w_disk_scaled)
-    avg_vz_disk = jnp.sum(vz_raw[:N_disk] * w_disk_scaled) / jnp.sum(w_disk_scaled)
+    # 6. Cylindrical Decomposition from Raw Space (Skipping Averages)
+    # Safety buffer of 0.05 prevents velocities from exploding near the origin
+    R = jnp.maximum(jnp.sqrt(x_raw**2 + y_raw**2), 0.05)
+    v_R = (x_raw * vx_raw + y_raw * vy_raw) / R
+    v_phi = (x_raw * vy_raw - y_raw * vx_raw) / R
 
-    avg_x_bulge = jnp.sum(x_raw[N_disk:] * w_bulge_scaled) / jnp.sum(w_bulge_scaled)
-    avg_y_bulge = jnp.sum(y_raw[N_disk:] * w_bulge_scaled) / jnp.sum(w_bulge_scaled)
-    avg_z_bulge = jnp.sum(z_raw[N_disk:] * w_bulge_scaled) / jnp.sum(w_bulge_scaled)
-    avg_vx_bulge = jnp.sum(vx_raw[N_disk:] * w_bulge_scaled) / jnp.sum(w_bulge_scaled)
-    avg_vy_bulge = jnp.sum(vy_raw[N_disk:] * w_bulge_scaled) / jnp.sum(w_bulge_scaled)
-    avg_vz_bulge = jnp.sum(vz_raw[N_disk:] * w_bulge_scaled) / jnp.sum(w_bulge_scaled)
-
-    x_centered = jnp.concatenate([x_raw[:N_disk] - avg_x_disk, x_raw[N_disk:] - avg_x_bulge])
-    y_centered = jnp.concatenate([y_raw[:N_disk] - avg_y_disk, y_raw[N_disk:] - avg_y_bulge])
-    z_centered = jnp.concatenate([z_raw[:N_disk] - avg_z_disk, z_raw[N_disk:] - avg_z_bulge])
-    vx_centered = jnp.concatenate([vx_raw[:N_disk] - avg_vx_disk, vx_raw[N_disk:] - avg_vx_bulge])
-    vy_centered = jnp.concatenate([vy_raw[:N_disk] - avg_vy_disk, vy_raw[N_disk:] - avg_vy_bulge])
-    vz_centered = jnp.concatenate([vz_raw[:N_disk] - avg_vz_disk, vz_raw[N_disk:] - avg_vz_bulge])
-
-    # Safety buffer of 0.05 prevents velocities from exploding near the origin;
-    # crucial here because the soft-binning kernel below smears any outlier
-    # velocity across the *entire* grid, not just one pixel like a histogram would.
-    R = jnp.maximum(jnp.sqrt(x_centered**2 + y_centered**2), 0.05)
-    v_R = (x_centered * vx_centered + y_centered * vy_centered) / R
-    v_phi = (x_centered * vy_centered - y_centered * vx_centered) / R
-
-    # Bulge retro-flip (Using JAX random)
+    # 7. Bulge retro-flip (Using JAX random)
+    # Assign each bulge orbit prograde (+1) with probability `spheroid_corotation`,
+    # retrograde (-1) otherwise.
     key, subkey = jax.random.split(key)
-    bulge_flip_mask = jax.random.choice(subkey, jnp.array([1.0, -1.0]), shape=(N_bulge,))
+    u = jax.random.uniform(subkey, shape=(N_bulge,))
+    bulge_flip_mask = jnp.where(u < spheroid_corotation, 1.0, -1.0)
+    
+    # Apply the flip mask ONLY to the bulge indices (from N_disk to the end)
     v_phi = v_phi.at[N_disk:].multiply(bulge_flip_mask)
 
-    key, subkey = jax.random.split(key)
-    phi_new = jax.random.uniform(subkey, shape=(N_disk + N_bulge,), minval=0.0, maxval=2*jnp.pi)
-    x = R * jnp.cos(phi_new)
-    y = R * jnp.sin(phi_new)
-    vy = v_R * jnp.sin(phi_new) + v_phi * jnp.cos(phi_new)
+    # 8. Reconstruct Cartesian Velocities 
+    # (Keeping original x, y, z and mapping the flipped v_phi back to vx, vy)
+    cos_phi = x_raw / R
+    sin_phi = y_raw / R
+    
+    vx_new = v_R * cos_phi - v_phi * sin_phi
+    vy_new = v_R * sin_phi + v_phi * cos_phi
 
-    key, subkey = jax.random.split(key)
-    z_flip = jax.random.choice(subkey, jnp.array([1.0, -1.0]), shape=(N_disk + N_bulge,))
-    z = z_centered * z_flip
+    # Return original coordinates and vz_raw, but updated vx and vy
+    return x_raw, y_raw, z_raw, vx_new, vy_new, vz_raw, all_weights
 
-    return x, y, z, vy, all_weights
 
-# ==============================================================================
-# STAGE 2: BIN THE TRACER POPULATION INTO EDGE-ON OBSERVABLE MAPS
-# ==============================================================================
 def bin_maps(
     x, z, vy, all_weights,
     grid_size: int = 30,
     extent_x: float = 15.0,
     extent_z: float = 10.0,
-    soft_bin_h: float = None,  # Configurable smoothing bandwidth
+    soft_bin_h: float = None,
 ):
     """
-    Bins a tracer population (x, z, vy, weights) into differentiable edge-on
-    mass/kinematic maps using Gaussian Soft-Binning (KDE).
+    Bins a tracer population into differentiable, edge-on observable maps using 
+    Gaussian Soft-Binning (Kernel Density Estimation).
+
+    Instead of dropping particles into hard discrete bins (which breaks gradients), 
+    each particle is smeared into a 2D Gaussian blob. The grid evaluates the sum 
+    of all blobs at each pixel center.
+
+    Args:
+        x: Array of particle x-coordinates (shape: [N]).
+        z: Array of particle z-coordinates (shape: [N]).
+        vy: Array of particle line-of-sight velocities (shape: [N]).
+        all_weights: Array of particle masses/weights (shape: [N]).
+        grid_size: Number of pixels along one spatial dimension (grid is N x N).
+        extent_x: Physical half-width of the grid (from -extent_x to +extent_x).
+        extent_z: Physical half-height of the grid (from -extent_z to +extent_z).
+        soft_bin_h: Gaussian bandwidth (smoothing scale). If None, defaults to 
+            0.25x the pixel width.
+
+    Returns:
+        dict: Containing the smoothed 2D maps ('mass', 'v_rot', 'sigma') and 
+        the grid edges ('x_edges', 'z_edges') for plotting.
     """
+    
+    # 1. Grid Definition
     dx = 2.0 * extent_x / grid_size
     dz = 2.0 * extent_z / grid_size
 
-    # Default bandwidth is 0.25x the pixel width: wide enough to stay smooth/
-    # differentiable, narrow enough not to blur out the velocity sign-flip near
-    # the disk center or the density cusp at the bulge center.
+    # Set default smoothing scale (bandwidth)
     if soft_bin_h is None:
         soft_bin_h = jnp.maximum(dx, dz) * 0.25
 
-    # Define pixel centers
+    # 1D arrays of pixel centers
     X_centers = jnp.linspace(-extent_x + dx/2, extent_x - dx/2, grid_size)
     Z_centers = jnp.linspace(-extent_z + dz/2, extent_z - dz/2, grid_size)
 
-    # Vectorized broadcasting to shape: (grid_z, grid_x, N_particles)
-    # This evaluates the distance of EVERY star to EVERY pixel instantly
+    # 2. Distance Matrix Calculation via Broadcasting
+    # We reshape the arrays to create a 3D matrix of shape: (grid_z, grid_x, N_particles)
+    # This calculates the distance from EVERY grid pixel to EVERY particle simultaneously.
+    
+    # Shape: (grid_z, 1, 1) - (1, 1, N_particles) -> (grid_z, 1, N_particles)
     dz_arr = Z_centers[:, None, None] - z[None, None, :]
+    
+    # Shape: (1, grid_x, 1) - (1, 1, N_particles) -> (1, grid_x, N_particles)
     dx_arr = X_centers[None, :, None] - x[None, None, :]
 
+    # Sum of squared distances. Shape becomes: (grid_z, grid_x, N_particles)
     dist_sq = dx_arr**2 + dz_arr**2
-    # Normalized 2D Gaussian kernel (density per unit area) times pixel area,
-    # so that summing over the whole grid recovers each star's weight exactly
-    # once (mass-conserving), matching the histogram convention.
-    kernel = (dx * dz) / (2.0 * jnp.pi * soft_bin_h**2) * jnp.exp(-0.5 * dist_sq / soft_bin_h**2)
 
-    # Apply soft acceptance weights and physical masses to the kernel
+    # 3. Gaussian Kernel Application
+    # Calculate the normalized 2D Gaussian density. We multiply by pixel area (dx * dz)
+    # so that integrating over the grid recovers the exact original particle mass.
+    normalization = (dx * dz) / (2.0 * jnp.pi * soft_bin_h**2)
+    kernel = normalization * jnp.exp(-0.5 * dist_sq / soft_bin_h**2)
+
+    # Scale the kernel by the mass/weight of each particle
     w_kernel = all_weights[None, None, :] * kernel
 
-    # Calculate Maps
+    # 4. Map Construction
+    # Sum across the particle axis (-1) to collapse down to a 2D map: (grid_z, grid_x)
     mass_map = jnp.sum(w_kernel, axis=-1)
 
-    # Protect against Division-by-Zero in empty pixels
+    # Protect against Division-by-Zero in empty pixels during gradient calculations
     mass_safe = jnp.maximum(mass_map, 1e-12)
 
-    # Differentiable Moment calculations
-    # Where mass is negligible (< 1e-5), return 0.0 to prevent gradient poisoning
-    v_rot_map = jnp.where(mass_map > 1e-5, jnp.sum(w_kernel * vy[None, None, :], axis=-1) / mass_safe, 0.0)
+    # Calculate Velocity (First Moment: Mean)
+    # We ignore pixels with negligible mass (< 1e-5) to prevent numerical instability
+    momentum_map = jnp.sum(w_kernel * vy[None, None, :], axis=-1)
+    v_rot_map = jnp.where(mass_map > 1e-5, momentum_map / mass_safe, 0.0)
 
-    v2_map = jnp.where(mass_map > 1e-5, jnp.sum(w_kernel * (vy**2)[None, None, :], axis=-1) / mass_safe, 0.0)
+    # Calculate Velocity Dispersion (Second Moment: Variance -> Sigma)
+    # Variance = E[v^2] - (E[v])^2
+    v2_momentum_map = jnp.sum(w_kernel * (vy**2)[None, None, :], axis=-1)
+    v2_map = jnp.where(mass_map > 1e-5, v2_momentum_map / mass_safe, 0.0)
+    
     variance_map = v2_map - v_rot_map**2
     sigma_map = jnp.sqrt(jnp.maximum(variance_map, 1e-12))
 
-    # Return edges for plotting consistency
+    # 5. Output Packaging
     x_edges = jnp.linspace(-extent_x, extent_x, grid_size + 1)
     z_edges = jnp.linspace(-extent_z, extent_z, grid_size + 1)
 
@@ -202,9 +222,7 @@ def bin_maps(
         'z_edges': z_edges
     }
 
-# ==============================================================================
-# MAIN OBSERVABLE FUNCTION
-# ==============================================================================
+
 def generate_edge_on_maps(
     mapper,
     pot_params: dict,
@@ -216,15 +234,18 @@ def generate_edge_on_maps(
     extent_x: float = 15.0,
     extent_z: float = 10.0,
     prng_seed: int = 42,
-    soft_bin_h: float = None # Configurable smoothing bandwidth
+    soft_bin_h: float = None, # Configurable smoothing bandwidth
+    spheroid_corotation: float = 0.5,
 ):
     """
     Generates fully differentiable edge-on mass and kinematic maps using
     Gaussian Soft-Binning (KDE).
     """
-    x, y, z, vy, all_weights = sample_and_map_particles(
+    x, y, z, vx, vy, vz, all_weights = sample_and_map_particles(
         mapper, pot_params, disk_df_params, bulge_df_params,
         N_disk=N_disk, N_bulge=N_bulge, prng_seed=prng_seed,
+        spheroid_corotation=spheroid_corotation,
     )
     return bin_maps(x, z, vy, all_weights, grid_size=grid_size, extent_x=extent_x,
                      extent_z=extent_z, soft_bin_h=soft_bin_h)
+
