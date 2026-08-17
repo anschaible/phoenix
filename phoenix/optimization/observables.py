@@ -7,6 +7,7 @@ from phoenix.distribution_functions.spheroid import f_double_power_law
 from phoenix.potentials.potentials import nfw_potential, plummer_potential, miyamoto_nagai_potential
 
 
+
 # HELPER FUNCTIONS
 def spheroid_df_wrapper(Jr, Jz, Jphi, Phi_xyz, theta, params):
     return f_double_power_law(Jr, Jz, Jphi, params)
@@ -23,23 +24,35 @@ def sample_and_map_particles(
     spheroid_corotation: float = 0.5,
 ):
     """
-    Samples the disk+bulge distribution functions in the given potential and maps
-    the resulting actions to phase space via the Phoenix surrogate.
+    Samples the disk and bulge distribution functions (DFs) in the given gravitational 
+    potential and maps the resulting actions to 3D phase space via the Phoenix surrogate.
 
-    Returns the (fully differentiable) tracer population: x, y, z, vy, weights.
-    vy is the line-of-sight velocity after re-randomizing the azimuthal angle
-    (assumes axisymmetry). y is kept (not just x, z) so that this population can
-    also be used directly for a 3D self-consistency check (see poisson_penalty.py).
+    This function performs differentiable rejection sampling of the actions, queries the 
+    neural network to obtain phase-space coordinates, and applies a dynamic net-rotation 
+    correction to the bulge population.
 
-    spheroid_corotation : fraction of bulge/spheroid orbits assigned PROGRADE
-        (co-rotating with the disk). The double-power-law spheroid DF is even in
-        J_phi, so a sign must be assigned to each bulge orbit's azimuthal motion.
-        0.5 (default) => equal prograde/retrograde => a non-rotating,
-        pressure-supported spheroid. 1.0 => a fully co-rotating central component.
-        Real disk galaxies often have a (partially) rotating central component, so
-        for a strongly rotating galaxy the default zero-net-rotation spheroid both
-        dilutes the central rotation signal and injects Monte-Carlo scatter into
-        the inner v_rot map; raise this toward 1.0 in that case.
+    Args:
+        mapper: The Phoenix neural network surrogate used to map actions to phase space.
+        pot_params (dict): Gravitational potential parameters. Expected keys:
+            'M_halo', 'a_halo', 'M_disk', 'a_disk', 'b_disk', 'M_bulge', 'a_bulge'.
+        disk_df_params (dict): Parameters governing the disk's distribution function.
+        bulge_df_params (dict): Parameters governing the bulge's distribution function.
+        N_disk (int, optional): Number of disk candidates to sample. Defaults to 100,000.
+        N_bulge (int, optional): Number of bulge candidates to sample. Defaults to 100,000.
+        prng_seed (int, optional): Seed for the JAX pseudo-random number generator. Defaults to 42.
+        spheroid_corotation (float, optional): Fraction of bulge/spheroid orbits assigned 
+            as PROGRADE (co-rotating with the disk). Because the spheroid DF is even in J_phi, 
+            a sign must be manually assigned to its azimuthal motion. 
+            - 0.5 (default) => Equal prograde/retrograde => Non-rotating, pressure-supported.
+            - 1.0 => Fully co-rotating central component.
+
+    Returns:
+        tuple: A fully differentiable tracer population containing (x, y, z, vx, vy, vz, weights).
+            - x, y, z (Array): 3D spatial coordinates (kpc).
+            - vx, vy (Array): In-plane velocities, dynamically reconstructed to account 
+              for the applied bulge prograde/retrograde rotation mask (km/s).
+            - vz (Array): Vertical velocities (km/s).
+            - all_weights (Array): Particle weights, properly scaled by M_disk and M_bulge.
     """
     # 1. Unpack Potential Parameters
     M_halo, a_halo = pot_params['M_halo'], pot_params['a_halo']
@@ -51,7 +64,6 @@ def sample_and_map_particles(
         return (nfw_potential(x, y, z, M_halo, a_halo) +
                 miyamoto_nagai_potential(x, y, z, M_disk, a_disk, b_disk) +
                 plummer_potential(x, y, z, M_bulge, a_bulge))
-
     # 3. Differentiable Sampling
     key = jax.random.PRNGKey(prng_seed)
 
@@ -238,8 +250,39 @@ def generate_edge_on_maps(
     spheroid_corotation: float = 0.5,
 ):
     """
-    Generates fully differentiable edge-on mass and kinematic maps using
-    Gaussian Soft-Binning (KDE).
+    End-to-end pipeline for generating fully differentiable edge-on observable kinematic maps 
+    of a galaxy model using Gaussian Soft-Binning (KDE).
+
+    This function combines two steps:
+    1. Samples tracer particles from the combined disk and bulge distribution 
+       functions and maps them to 3D phase space via the Phoenix neural network.
+    2. Projects these particles into an edge-on view (x-z plane with line-of-sight 
+       velocity vy) and bins them into mass and kinematic maps using Gaussian 
+       soft-binning (KDE) to preserve differentiability.
+
+    Args:
+        mapper: The Phoenix neural network surrogate used to map actions to phase space.
+        pot_params (dict): Gravitational potential parameters (halo, disk, and bulge masses/scales).
+        disk_df_params (dict): Parameters governing the disk's distribution function.
+        bulge_df_params (dict): Parameters governing the bulge's distribution function.
+        N_disk (int, optional): Number of disk particles to sample. Defaults to 100,000.
+        N_bulge (int, optional): Number of bulge particles to sample. Defaults to 100,000.
+        grid_size (int, optional): The resolution of the output 2D grids (grid_size x grid_size). Defaults to 30.
+        extent_x (float, optional): Physical half-width of the spatial grid in the x-direction (kpc). Defaults to 15.0.
+        extent_z (float, optional): Physical half-height of the spatial grid in the z-direction (kpc). Defaults to 10.0.
+        prng_seed (int, optional): Seed for the JAX pseudo-random number generator. Defaults to 42.
+        soft_bin_h (float, optional): Gaussian smoothing bandwidth for KDE. If None, 
+            auto-calculates to 0.25x the pixel width.
+        spheroid_corotation (float, optional): Fraction of bulge orbits assigned as 
+            prograde (co-rotating). 0.5 = non-rotating bulge, 1.0 = fully co-rotating. Defaults to 0.5.
+
+    Returns:
+        dict: A dictionary containing the smoothed edge-on maps and grid edges:
+            - 'mass' (Array): 2D map of projected mass density.
+            - 'v_rot' (Array): 2D map of line-of-sight rotational velocity.
+            - 'sigma' (Array): 2D map of line-of-sight velocity dispersion.
+            - 'x_edges' (Array): 1D array of spatial bin edges along the x-axis.
+            - 'z_edges' (Array): 1D array of spatial bin edges along the z-axis.
     """
     x, y, z, vx, vy, vz, all_weights = sample_and_map_particles(
         mapper, pot_params, disk_df_params, bulge_df_params,
