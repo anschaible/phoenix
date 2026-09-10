@@ -5,7 +5,7 @@ from jax.flatten_util import ravel_pytree
 
 # --- Import your module ---
 # Ensure your file is named disk_df.py or adjust the import
-from phoenix.distributionfunctions_disky_Binney import (
+from phoenix.distribution_functions.disk import (
     Sigma_exp,
     sigmaR_of_Rc,
     sigmaz_of_Rc,

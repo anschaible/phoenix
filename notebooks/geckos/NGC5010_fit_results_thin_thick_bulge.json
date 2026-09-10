@@ -1,0 +1,125 @@
+{
+  "galaxy": "NGC5010",
+  "model": "thin disk + thick disk + spheroid",
+  "config": {
+    "D_MPC": 42.2,
+    "LMSTAR": 10.6833,
+    "GRID_SIZE": 40,
+    "EXTENT_X": 7.0,
+    "EXTENT_Z": 4.0,
+    "N_PARTICLES_PER_COMPONENT": 12000,
+    "N_STEPS": 600,
+    "N_LBFGS_STEPS": 100,
+    "OBS_BANDWIDTH": 0.4,
+    "LOSS_WEIGHTS": [
+      0.0,
+      3.0,
+      2.0
+    ],
+    "REG_WEIGHT": 0.01,
+    "FROZEN": [
+      "L0",
+      "N0_spheroid",
+      "Rinit_for_Rc",
+      "Sigma0",
+      "eta_spheroid"
+    ],
+    "SPHEROID_COROTATION": 1.0,
+    "CENTER_PERCENTILE": null
+  },
+  "adam": {
+    "params": {
+      "bulge": {
+        "Beta_spheroid": 3.1999998092651367,
+        "Gamma_spheroid": 0.41372957825660706,
+        "J0_spheroid": 393.5309143066406,
+        "N0_spheroid": 5000004096.0,
+        "eta_spheroid": 1.0
+      },
+      "mix": {
+        "f_thin": 0.593916118144989
+      },
+      "pot": {
+        "M_bulge": 9482351616.0,
+        "M_disk": 59930996736.0,
+        "M_halo": 1242969145344.0,
+        "a_bulge": 0.7957069873809814,
+        "a_disk": 2.7480506896972656,
+        "a_halo": 33.75044631958008,
+        "b_disk": 0.29748284816741943
+      },
+      "thick": {
+        "L0": 3.0,
+        "R0": 3.062232494354248,
+        "Rd": 1.0778275728225708,
+        "Rinit_for_Rc": 4.0,
+        "RsigR": 4.339468955993652,
+        "RsigZ": 4.946405410766602,
+        "Sigma0": 1000.0001220703125,
+        "sigmaR0_R0": 62.1457405090332,
+        "sigmaz0_R0": 59.7329216003418
+      },
+      "thin": {
+        "L0": 3.0,
+        "R0": 6.187006950378418,
+        "Rd": 0.612960696220398,
+        "Rinit_for_Rc": 4.0,
+        "RsigR": 10.470367431640625,
+        "RsigZ": 1.3865089416503906,
+        "Sigma0": 1000.0001220703125,
+        "sigmaR0_R0": 59.02434539794922,
+        "sigmaz0_R0": 18.163745880126953
+      }
+    },
+    "final_loss": 0.043409984558820724
+  },
+  "adam_lbfgs": {
+    "params": {
+      "bulge": {
+        "N0_spheroid": 5000004096.0,
+        "eta_spheroid": 1.0,
+        "Beta_spheroid": 3.1999998092651367,
+        "Gamma_spheroid": 0.41296815872192383,
+        "J0_spheroid": 394.6846008300781
+      },
+      "mix": {
+        "f_thin": 0.5988954901695251
+      },
+      "pot": {
+        "M_bulge": 9483835392.0,
+        "M_disk": 59681751040.0,
+        "M_halo": 1245990748160.0,
+        "a_bulge": 0.7848364114761353,
+        "a_disk": 2.7387428283691406,
+        "a_halo": 33.75391387939453,
+        "b_disk": 0.29760557413101196
+      },
+      "thick": {
+        "L0": 3.0,
+        "Rinit_for_Rc": 4.0,
+        "Sigma0": 1000.0001220703125,
+        "R0": 3.0755996704101562,
+        "Rd": 1.0810481309890747,
+        "RsigR": 4.326562881469727,
+        "RsigZ": 4.931671619415283,
+        "sigmaR0_R0": 62.457847595214844,
+        "sigmaz0_R0": 59.87173843383789
+      },
+      "thin": {
+        "L0": 3.0,
+        "Rinit_for_Rc": 4.0,
+        "Sigma0": 1000.0001220703125,
+        "R0": 6.194606781005859,
+        "Rd": 0.6013675332069397,
+        "RsigR": 10.534268379211426,
+        "RsigZ": 1.3976224660873413,
+        "sigmaR0_R0": 58.44731521606445,
+        "sigmaz0_R0": 18.192230224609375
+      }
+    },
+    "final_loss": 0.043264731764793396,
+    "n_iter": 50,
+    "stop_reason": "no progress for 3 iterations (line search stalled)",
+    "n_projected": 42
+  }
+}

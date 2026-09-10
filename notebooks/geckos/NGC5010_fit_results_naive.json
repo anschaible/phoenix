@@ -1,0 +1,57 @@
+{
+  "galaxy": "NGC5010",
+  "config": {
+    "D_MPC": 42.2,
+    "LMSTAR": 10.6833,
+    "GRID_SIZE": 40,
+    "EXTENT_X": 7.0,
+    "EXTENT_Z": 4.0,
+    "N_PARTICLES": 20000,
+    "N_STEPS": 600,
+    "OBS_BANDWIDTH": 0.4,
+    "LOSS_WEIGHTS": [
+      0.0,
+      2.0,
+      3.0,
+      0.0
+    ],
+    "REG_WEIGHT": 0.05,
+    "FROZEN": [
+      "Rinit_for_Rc",
+      "Sigma0",
+      "N0_spheroid"
+    ],
+    "SPHEROID_COROTATION": 1.0,
+    "CENTER_PERCENTILE": null
+  },
+  "naive": {
+    "pot_params": {
+      "M_bulge": 7188026880.0,
+      "M_disk": 49079664640.0,
+      "M_halo": 1294652145664.0,
+      "a_bulge": 0.6120257377624512,
+      "a_disk": 2.169459342956543,
+      "a_halo": 31.128816604614258,
+      "b_disk": 0.2917475402355194
+    },
+    "disk_df_params": {
+      "L0": 3.0007951259613037,
+      "R0": 4.565930366516113,
+      "Rd": 0.9269193410873413,
+      "Rinit_for_Rc": 4.0,
+      "RsigR": 5.606534957885742,
+      "RsigZ": 3.0053696632385254,
+      "Sigma0": 1000.0001220703125,
+      "sigmaR0_R0": 47.43535614013672,
+      "sigmaz0_R0": 49.4990119934082
+    },
+    "bulge_df_params": {
+      "Beta_spheroid": 4.489680290222168,
+      "Gamma_spheroid": 1.4999885559082031,
+      "J0_spheroid": 60.0106201171875,
+      "N0_spheroid": 5000004096.0,
+      "eta_spheroid": 0.9995154738426208
+    },
+    "final_loss": 0.05405524745583534
+  }
+}

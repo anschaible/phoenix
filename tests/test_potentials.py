@@ -1,7 +1,7 @@
 import numpy as np
 import jax.numpy as jnp
 
-from phoenix.potentials import plummer_potential
+from phoenix.potentials.potentials import plummer_potential
 from phoenix.constants import G
 
 
@@ -37,7 +37,7 @@ def test_plummer_potential_vectorized():
 	np.testing.assert_allclose(np.asarray(phi), np.asarray(expected))
 
 
-from phoenix.potentials import isochrone_potential
+from phoenix.potentials.potentials import isochrone_potential
 
 
 def test_isochrone_potential_center():
@@ -57,7 +57,8 @@ def test_isochrone_potential_known_radius():
 	a = 1.2
 	phi = isochrone_potential(x, y, z, M, a)
 	expected = -G * M / (a + jnp.sqrt(r * r + a * a))
-	np.testing.assert_allclose(np.asarray(phi), np.asarray(expected))
+	# float32: the two expressions round differently in the last digit
+	np.testing.assert_allclose(np.asarray(phi), np.asarray(expected), rtol=1e-6)
 
 
 def test_isochrone_vectorized():
@@ -72,7 +73,7 @@ def test_isochrone_vectorized():
 	np.testing.assert_allclose(np.asarray(phi), np.asarray(expected))
 
 
-from phoenix.potentials import nfw_potential
+from phoenix.potentials.potentials import nfw_potential
 
 
 def test_nfw_potential_center():
@@ -112,7 +113,7 @@ def test_nfw_vectorized():
 	np.testing.assert_allclose(np.asarray(phi), np.asarray(expected))
 
 
-from phoenix.potentials import miyamoto_nagai_potential
+from phoenix.potentials.potentials import miyamoto_nagai_potential
 
 
 def test_miyamoto_nagai_center():
@@ -155,7 +156,7 @@ def test_miyamoto_nagai_vectorized():
 	np.testing.assert_allclose(np.asarray(phi), np.asarray(expected))
 
 
-from phoenix.potentials import logarithmic_potential
+from phoenix.potentials.potentials import logarithmic_potential
 
 
 def test_logarithmic_potential_center():

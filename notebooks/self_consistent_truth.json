@@ -1,0 +1,51 @@
+{
+  "pot_params": {
+    "M_bulge": 13881736192.0,
+    "M_disk": 80549584896.0,
+    "M_halo": 1000000389120.0,
+    "a_bulge": 0.058045461773872375,
+    "a_disk": 8.07244873046875,
+    "a_halo": 20.0,
+    "b_disk": 1.4559528827667236
+  },
+  "disk_df_params": {
+    "L0": 10.0,
+    "R0": 8.0,
+    "Rd": 3.0,
+    "Rinit_for_Rc": 8.0,
+    "RsigR": 6.0,
+    "RsigZ": 6.0,
+    "Sigma0": 1000.0001220703125,
+    "sigmaR0_R0": 35.000003814697266,
+    "sigmaz0_R0": 20.0
+  },
+  "bulge_df_params": {
+    "Beta_spheroid": 4.5,
+    "Gamma_spheroid": 1.5,
+    "J0_spheroid": 100.00000762939453,
+    "N0_spheroid": 9999993856.0,
+    "eta_spheroid": 1.0
+  },
+  "penalty_initial": 0.31509777903556824,
+  "penalty_final": 0.045685481280088425,
+  "config": {
+    "SEED": 0,
+    "N_PARTICLES": 6000,
+    "GRID_SIZE": 14,
+    "EXTENT_X": 15.0,
+    "EXTENT_Z": 10.0,
+    "OBS_BANDWIDTH": 0.5357142857142857,
+    "POISSON_KWARGS": {
+      "grid_size": 20,
+      "match_kernel": true,
+      "n_quad": 3
+    },
+    "W_POISSON": 0.1,
+    "FROZEN": [
+      "Sigma0",
+      "N0_spheroid",
+      "Rinit_for_Rc",
+      "L0"
+    ]
+  }
+}

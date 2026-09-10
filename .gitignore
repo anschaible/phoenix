@@ -139,6 +139,7 @@ dmypy.json
 cython_debug/
 
 notebooks/figures/*
-notebooks/geckos/
+notebooks/geckos/data/*
+notebooks/geckos/plots/*
 
 phoenix/torus_mapping_agama/data_mapping/*

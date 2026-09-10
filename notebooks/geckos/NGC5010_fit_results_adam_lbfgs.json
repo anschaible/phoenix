@@ -1,0 +1,92 @@
+{
+  "galaxy": "NGC5010",
+  "config": {
+    "D_MPC": 42.2,
+    "LMSTAR": 10.6833,
+    "GRID_SIZE": 40,
+    "EXTENT_X": 7.0,
+    "EXTENT_Z": 4.0,
+    "N_PARTICLES": 20000,
+    "N_STEPS": 600,
+    "N_LBFGS_STEPS": 100,
+    "LBFGS_MEMORY": 10,
+    "OBS_BANDWIDTH": 0.4,
+    "LOSS_WEIGHTS": [
+      0.0,
+      3.0,
+      2.0,
+      0.0
+    ],
+    "REG_WEIGHT": 0.01,
+    "FROZEN": [
+      "Rinit_for_Rc",
+      "Sigma0",
+      "N0_spheroid"
+    ],
+    "SPHEROID_COROTATION": 1.0,
+    "CENTER_PERCENTILE": null
+  },
+  "adam": {
+    "pot_params": {
+      "M_bulge": 6640437248.0,
+      "M_disk": 47634198528.0,
+      "M_halo": 1320486567936.0,
+      "a_bulge": 0.7008678913116455,
+      "a_disk": 2.00693416595459,
+      "a_halo": 30.7239990234375,
+      "b_disk": 0.2613377273082733
+    },
+    "disk_df_params": {
+      "L0": 2.9936392307281494,
+      "R0": 4.255705833435059,
+      "Rd": 0.7316824197769165,
+      "Rinit_for_Rc": 4.0,
+      "RsigR": 7.195887565612793,
+      "RsigZ": 1.929653525352478,
+      "Sigma0": 1000.0001220703125,
+      "sigmaR0_R0": 50.335662841796875,
+      "sigmaz0_R0": 43.26361846923828
+    },
+    "bulge_df_params": {
+      "Beta_spheroid": 4.432251453399658,
+      "Gamma_spheroid": 1.4942522048950195,
+      "J0_spheroid": 59.93043518066406,
+      "N0_spheroid": 5000004096.0,
+      "eta_spheroid": 0.998114287853241
+    },
+    "final_loss": 0.04508348926901817
+  },
+  "adam_lbfgs": {
+    "pot_params": {
+      "M_bulge": 6653863424.0,
+      "M_disk": 47800115200.0,
+      "M_halo": 1321965846528.0,
+      "a_bulge": 0.7000018358230591,
+      "a_disk": 2.000209093093872,
+      "a_halo": 30.650651931762695,
+      "b_disk": 0.26121634244918823
+    },
+    "disk_df_params": {
+      "Rinit_for_Rc": 4.0,
+      "Sigma0": 1000.0001220703125,
+      "L0": 2.9936413764953613,
+      "R0": 4.256430149078369,
+      "Rd": 0.7294132113456726,
+      "RsigR": 7.194999694824219,
+      "RsigZ": 1.9339438676834106,
+      "sigmaR0_R0": 50.39976501464844,
+      "sigmaz0_R0": 43.248809814453125
+    },
+    "bulge_df_params": {
+      "N0_spheroid": 5000004096.0,
+      "Beta_spheroid": 4.432307243347168,
+      "Gamma_spheroid": 1.4942753314971924,
+      "J0_spheroid": 59.931522369384766,
+      "eta_spheroid": 0.9981157183647156
+    },
+    "final_loss": 0.045009732246398926,
+    "n_iter": 24,
+    "stop_reason": "no progress for 3 iterations (line search stalled)",
+    "n_projected": 0
+  }
+}
