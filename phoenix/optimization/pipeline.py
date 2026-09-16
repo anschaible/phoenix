@@ -338,7 +338,10 @@ def make_loss_fn(
         prng_seed (int, optional): Fixed random seed for particle sampling to ensure 
             deterministic gradients. Defaults to 123.
         loss_weights (tuple, optional): Weights for (mass, v_rot, sigma, poisson). 
-            Defaults to (1.0, 1.0, 1.0, 0.1).
+            Defaults to (1.0, 1.0, 1.0, 0.1). A zero poisson weight SKIPS the penalty
+            entirely rather than multiplying it by zero -- it is the most expensive
+            part of the graph, and evaluating it anyway is what made the large-grid
+            GECKOS fits run out of memory. `aux['poisson_penalty']` is then 0.0.
         poisson_kwargs (dict, optional): Extra arguments for the Poisson penalty.
         spheroid_corotation (float, optional): Bulge rotation fraction. Defaults to 0.5.
         inclination_deg (float, optional): Viewing inclination in degrees at which the
@@ -437,12 +440,24 @@ def make_loss_fn(
         # 2. Physical Self-Consistency (Poisson Penalty)
         # Compared against the BARYONIC potential: the tracers carry M_disk + M_bulge,
         # so they cannot reproduce the dark halo's density (see baryonic_potential_raw).
-        poisson_penalty = compute_poisson_penalty(
-            x, y, z, w,
-            baryonic_potential_raw,
-            pot_params_to_tuple(pot_params),
-            **poisson_kwargs
-        )
+        #
+        # Skipped outright at zero weight. The term would only be multiplied by 0, but
+        # it is by far the most expensive part of this graph: it evaluates the analytic
+        # density on a (grid_size^2 x n_quad^2) quadrature stencil against every tracer,
+        # so at GECKOS scale (default grid 30, n_quad 5, 24k tracers) its reverse-mode
+        # intermediates alone request ~1.7 GB. On a CPU backend that is the difference
+        # between a fit that runs and one that dies with RESOURCE_EXHAUSTED. `w_poisson`
+        # comes from the static `loss_weights` tuple, so this branch is resolved at
+        # trace time and never becomes a traced conditional.
+        if w_poisson == 0:
+            poisson_penalty = jnp.zeros((), dtype=jnp.float32)
+        else:
+            poisson_penalty = compute_poisson_penalty(
+                x, y, z, w,
+                baryonic_potential_raw,
+                pot_params_to_tuple(pot_params),
+                **poisson_kwargs
+            )
 
         # 3. Combine Core Losses
         loss = (w_mass * mass_loss +
@@ -970,3 +985,458 @@ def fit_multistart(
     best['final_losses'] = final_losses
     best['best_index'] = best_index
     return best
+
+
+
+# ==============================================================================
+# VARIATIONAL INFERENCE
+# ==============================================================================
+def _flat_param_names(params_log: dict) -> list:
+    """Names of the leaves of `params_log`, in the order `ravel_pytree` flattens them.
+
+    `ravel_pytree` sorts dict keys, so the flat vector's order is NOT the insertion
+    order of the parameter dicts. Raveling a tree of leaf indices recovers the true
+    ordering, which is what labels the posterior mean/covariance.
+    """
+    names, id_tree = [], {}
+    for group, group_log in params_log.items():
+        id_tree[group] = {}
+        for k in group_log:
+            id_tree[group][k] = jnp.float32(len(names))
+            names.append((group, k))
+    order, _ = ravel_pytree(id_tree)
+    return [names[int(i)] for i in np.asarray(order)]
+
+
+def fit_vi(
+    mapper,
+    obs_maps: dict,
+    init_pot_params: dict,
+    init_disk_df_params: dict,
+    init_bulge_df_params: dict,
+    N_disk: int = 5_000,
+    N_bulge: int = 5_000,
+    grid_size: int = 16,
+    extent_x: float = 15.0,
+    extent_z: float = 10.0,
+    prng_seed: int = 123,
+    soft_bin_h: float = None,
+    mass_floor: float = 1e-3,
+    spheroid_corotation: float = 0.5,
+    inclination_deg: float = 90.0,
+    sampler: str = "soft",
+    ml_ratios=None,
+    extra_mask=None,
+    pixel_weights=None,
+    use_terms: tuple = ('mass', 'v_rot', 'sigma'),
+    noise_mass_dex: float = 0.05,
+    noise_v: float = 10.0,
+    noise_sigma: float = 10.0,
+    poisson_tol: float = None,
+    poisson_kwargs: dict = None,
+    prior_log_std: float = 2.0,
+    prior_center_log: dict = None,
+    frozen_params: tuple = (),
+    full_rank: bool = True,
+    precondition: bool = True,
+    mc_remat: bool = True,
+    precond_delta: float = 0.01,
+    init_post_std: float = 0.3,
+    n_mc: int = 4,
+    learning_rate: float = 0.05,
+    lr_decay: float = 0.02,
+    avg_frac: float = 0.3,
+    n_steps: int = 400,
+    grad_clip_norm: float = 5.0,
+    vi_seed: int = 0,
+    param_bounds: dict = None,
+    n_posterior_samples: int = 20_000,
+    progress_every: int = None,
+):
+    """
+    Approximate the Bayesian posterior over the log-parameters with a Gaussian,
+    fitted by maximizing the ELBO (reparameterized stochastic VI).
+
+    Where `fit` returns a single best-fit point, this returns a *distribution*, which
+    is what the strong degeneracies of this model call for: the kinematics pin down
+    the potential and the disk structure to a fraction of a percent, while the bulge
+    DF shape parameters are constrained only at the tens-of-percent level and
+    `eta_spheroid` is barely constrained at all. Only a posterior says which is which.
+
+    Model
+    -----
+      - Unconstrained variables `u = log(params)`, the same log-space `fit` works in.
+      - Gaussian likelihood on the maps over the observed footprint, using the SAME
+        residual definitions as `data_fit_loss` so the posterior sits on the objective
+        the point-estimate fit minimized:
+            mass  : (log10 model - log10 obs) / noise_mass_dex     [dex]
+            v_rot : (model - obs) / noise_v                        [km/s]
+            sigma : (model - obs) / noise_sigma                    [km/s]
+        log L = -0.5 * sum_pixels chi2. Unlike `data_fit_loss` these are SUMS, not
+        means: a mean is not a log-likelihood, and dividing by the pixel count would
+        make the posterior width independent of how much data there is.
+      - A broad Gaussian prior on `u` centred at `prior_center_log` (default: the
+        initial guess), width `prior_log_std`. Parameters the data cannot constrain
+        return this prior instead of running off to their bounds.
+      - Optionally the Poisson self-consistency term as an additional log-prior,
+        `-0.5 * (penalty / poisson_tol)**2` -- "the model is believed to be
+        self-consistent to within `poisson_tol`". `None` (default) switches it off.
+
+    Posterior family
+    ----------------
+    `full_rank=True` (default) fits q(u) = N(mu, L L^T) with a dense Cholesky factor,
+    so the posterior carries CORRELATIONS. This matters here: the parameters are
+    degenerate in combination (halo mass against scale radius, disk mass against
+    scale length), and a mean-field posterior reports each marginal as if the others
+    were held fixed -- it cannot represent a degeneracy ridge at all, so a corner plot
+    of it shows only axis-aligned blobs. `full_rank=False` gives the cheaper diagonal
+    posterior, whose widths are underestimates along correlated directions.
+
+    Preconditioning
+    ---------------
+    `precondition=True` (default) is what makes this converge at all. The posterior
+    scales of this model span four orders of magnitude -- measured on the mock,
+    log-sigma runs from ~5e-4 for `a_halo` to ~5 for `eta_spheroid` -- and Adam takes
+    steps of roughly the same size in every coordinate, so a learning rate that moves
+    the broad directions at a reasonable pace blows the sharp ones straight out of
+    their basin (the ELBO then oscillates by orders of magnitude and never settles).
+    A diagonal curvature estimate of `-log_joint` at the initial point, by central
+    differences with step `precond_delta`, defines a per-parameter scale
+    `s_i = 1/sqrt(H_ii)` (capped at `prior_log_std` where the curvature is ~0, i.e.
+    for unconstrained parameters). VI then runs in whitened coordinates
+    `u = u_init + s * z`, where every direction has posterior width of order 1.
+    The returned mean and covariance are transformed back to log-space.
+
+    Notes
+    -----
+    The DF-sampling PRNG seed is fixed for the whole run (common random numbers), so
+    the likelihood is a smooth deterministic function of `u` -- required for
+    low-variance reparameterization gradients. Initialise at the point-estimate MAP
+    (and, if the fit used bandwidth annealing, pass `soft_bin_h` equal to the FINAL
+    annealed bandwidth) so VI characterises the posterior around the solution the fit
+    actually found; the preconditioner is measured there too.
+
+    Args:
+        frozen_params (tuple, optional): Parameters excluded from inference and held
+            at their initial value. Pass the same set `fit` froze: parameters with
+            (numerically) zero gradient carry no information, so their "posterior" is
+            exactly the prior, and including them only adds meaningless panels to a
+            corner plot and ill-conditioned dimensions to the covariance.
+        poisson_tol (float, optional): Tolerance of the Poisson self-consistency
+            prior. A reasonable choice is the penalty attained by the ground truth.
+        lr_decay (float, optional): Final learning rate as a fraction of
+            `learning_rate` (exponential schedule). Stochastic VI does not converge at
+            a fixed step size -- it reaches a noise ball and rattles around inside it.
+        mc_remat (bool, optional): Rematerialize (gradient-checkpoint) each Monte
+            Carlo draw of the ELBO rather than storing its forward pass. Trades ~1
+            extra forward evaluation per draw for a factor-`n_mc` reduction in peak
+            memory. Needed at n_mc >= 4 once `poisson_tol` puts the self-consistency
+            tensor in the likelihood. Set False only if memory is plentiful and the
+            extra recomputation matters.
+        avg_frac (float, optional): Fraction of the run, at the end, over which the
+            variational parameters are averaged (Polyak averaging). This is what
+            removes the residual MC jitter from the reported posterior. 0 disables it.
+        n_posterior_samples (int, optional): Draws returned in `samples_log` /
+            `samples`, for corner plots and derived quantities.
+
+    Returns:
+        dict with
+            - 'names'        : list of (group, param) in the flat vector's order
+            - 'labels'       : the same as bare parameter-name strings
+            - 'mu_log'       : posterior mean in log-space (free parameters)
+            - 'cov_log'      : posterior covariance in log-space (free parameters)
+            - 'std_log'      : sqrt of its diagonal (~fractional uncertainty)
+            - 'corr_log'     : correlation matrix
+            - 'samples_log'  : (n_posterior_samples, D_free) draws in log-space
+            - 'samples'      : the same draws in physical units (exp)
+            - 'posterior'    : per-parameter median / +-1 sigma band, by group
+            - 'pot_params', 'disk_df_params', 'bulge_df_params': posterior median
+            - 'precond_scale': the whitening scales `s`
+            - 'at_bound'     : per-parameter flag, True where the initial point sits
+                               on a physical bound. The posterior there is a TRUNCATED
+                               Gaussian reported as an untruncated one, so its width is
+                               not trustworthy -- surface these rather than read them.
+            - 'elbo_hist'    : ELBO per step
+            - 'frozen'       : the values held fixed
+    """
+    poisson_kwargs = poisson_kwargs or {}
+
+    # --------------------------------------------------------------------------
+    # 1. Flatten the parameter tree; split free vs frozen
+    # --------------------------------------------------------------------------
+    mu0_tree = params_to_log(init_pot_params, init_disk_df_params, init_bulge_df_params)
+    mu0_vec, unravel = ravel_pytree(mu0_tree)
+    names = _flat_param_names(mu0_tree)
+
+    free_idx = np.array([i for i, (_, k) in enumerate(names) if k not in frozen_params],
+                        dtype=int)
+    if free_idx.size == 0:
+        raise ValueError("fit_vi: every parameter is frozen, nothing to infer.")
+    free_names = [names[i] for i in free_idx]
+    D = int(free_idx.size)
+
+    base_vec = jnp.asarray(mu0_vec)          # holds the frozen entries at their value
+    free_idx_j = jnp.asarray(free_idx)
+    u0_free = jnp.asarray(mu0_vec)[free_idx_j]
+
+    def _scatter(u_free):
+        """Insert the free coordinates back into the full parameter vector."""
+        return base_vec.at[free_idx_j].set(u_free)
+
+    if param_bounds is not None:
+        log_lo_tree, log_hi_tree = log_bounds_tree(mu0_tree, param_bounds)
+        log_lo_vec, _ = ravel_pytree(log_lo_tree)
+        log_hi_vec, _ = ravel_pytree(log_hi_tree)
+    else:
+        log_lo_vec = log_hi_vec = None
+
+    prior_center = (mu0_vec if prior_center_log is None
+                    else ravel_pytree(prior_center_log)[0])[free_idx_j]
+
+    # --------------------------------------------------------------------------
+    # 2. Log-joint
+    # --------------------------------------------------------------------------
+    obs_mass = jnp.asarray(obs_maps['mass'])
+    obs_v = jnp.asarray(obs_maps['v_rot'])
+    obs_s = jnp.asarray(obs_maps['sigma'])
+
+    # Footprint, fixed for the whole run, taken from the observation (same rule as
+    # `make_loss_fn`).
+    data_mask = obs_mass > mass_floor
+    if extra_mask is not None:
+        data_mask = data_mask & jnp.logical_not(jnp.asarray(extra_mask))
+    w_pix = jnp.where(data_mask, 1.0 if pixel_weights is None else pixel_weights, 0.0)
+
+    use_mass = 'mass' in use_terms
+    use_v = 'v_rot' in use_terms
+    use_s = 'sigma' in use_terms
+
+    def log_likelihood(params_log):
+        pot_params, disk_df_params, bulge_df_params = log_to_params(params_log)
+        x, y, z, vx, vy, vz, w = sample_and_map_particles(
+            mapper, pot_params, disk_df_params, bulge_df_params,
+            N_disk=N_disk, N_bulge=N_bulge, prng_seed=prng_seed,
+            spheroid_corotation=spheroid_corotation, sampler=sampler,
+        )
+        w_obs = apply_mass_to_light(w, N_disk, ml_ratios)
+        x_sky, z_sky, v_los = project_to_sky(x, y, z, vx, vy, vz, inclination_deg)
+        m = bin_maps(x_sky, z_sky, v_los, w_obs, grid_size=grid_size,
+                     extent_x=extent_x, extent_z=extent_z, soft_bin_h=soft_bin_h)
+
+        chi2 = 0.0
+        if use_mass:
+            r = (jnp.log10(m['mass'] + mass_floor)
+                 - jnp.log10(obs_mass + mass_floor)) / noise_mass_dex
+            chi2 = chi2 + jnp.sum(w_pix * r**2)
+        if use_v:
+            r = (m['v_rot'] - obs_v) / noise_v
+            chi2 = chi2 + jnp.sum(w_pix * r**2)
+        if use_s:
+            r = (m['sigma'] - obs_s) / noise_sigma
+            chi2 = chi2 + jnp.sum(w_pix * r**2)
+
+        ll = -0.5 * chi2
+        # Physics term: self-consistency as a soft prior, on the MASS-weighted tracers.
+        if poisson_tol is not None:
+            penalty = compute_poisson_penalty(
+                x, y, z, w, baryonic_potential_raw,
+                pot_params_to_tuple(pot_params), **poisson_kwargs)
+            ll = ll - 0.5 * (penalty / poisson_tol) ** 2
+        return ll
+
+    def log_joint(u_free):
+        u_full = _scatter(u_free)
+        # Clip to the physical range before evaluating the model: a wide variational
+        # draw can otherwise push a parameter into a regime where the surrogate or the
+        # sampler returns non-finite values and the ELBO goes NaN. This makes the
+        # posterior a truncated Gaussian on the physical support.
+        if log_lo_vec is not None:
+            u_full = jnp.clip(u_full, log_lo_vec, log_hi_vec)
+        log_prior = -0.5 * jnp.sum(((u_full[free_idx_j] - prior_center) / prior_log_std) ** 2)
+        return log_likelihood(unravel(u_full)) + log_prior
+
+    # --------------------------------------------------------------------------
+    # 3. Preconditioner: per-parameter posterior scale from the local curvature
+    # --------------------------------------------------------------------------
+    at_bound = np.zeros(D, dtype=bool)
+    if log_lo_vec is not None:
+        u0_np = np.asarray(u0_free)
+        lo_np = np.asarray(log_lo_vec)[free_idx]
+        hi_np = np.asarray(log_hi_vec)[free_idx]
+        at_bound = (u0_np - lo_np < precond_delta) | (hi_np - u0_np < precond_delta)
+
+    if precondition:
+        lj = jax.jit(log_joint)
+        f0 = float(lj(u0_free))
+        scale = np.empty(D)
+        for j in range(D):
+            def f(t):
+                return float(lj(u0_free + jnp.zeros(D).at[j].set(t)))
+            d = precond_delta
+            # `log_joint` clips its argument to the physical bounds, so it is FLAT
+            # outside them. A centred stencil straddling a bound therefore measures a
+            # half-clipped parabola and reports a curvature that is far too large --
+            # the parameter comes out with an absurdly tight "posterior" precisely
+            # where it is least determined. Step to the interior side instead.
+            if log_lo_vec is not None and u0_np[j] - lo_np[j] < d:
+                hjj = -(f(2 * d) - 2.0 * f(d) + f0) / d**2       # forward
+            elif log_lo_vec is not None and hi_np[j] - u0_np[j] < d:
+                hjj = -(f(-2 * d) - 2.0 * f(-d) + f0) / d**2     # backward
+            else:
+                hjj = -(f(d) - 2.0 * f0 + f(-d)) / d**2          # centred
+            # curvature of -log_joint; negative/zero means flat (unconstrained)
+            scale[j] = prior_log_std if not (hjj > 0) else min(
+                float(1.0 / np.sqrt(hjj)), prior_log_std)
+        if progress_every:
+            print("    [fit_vi] preconditioner (implied log-sigma per parameter):")
+            for j, (_, k) in enumerate(free_names):
+                print(f"        {k:16s} {scale[j]:.3e}")
+    else:
+        scale = np.ones(D)
+    scale_j = jnp.asarray(scale)
+
+    # VI runs on whitened coordinates z, with u_free = u0_free + scale * z.
+    def log_joint_z(z):
+        return log_joint(u0_free + scale_j * z)
+
+    # --------------------------------------------------------------------------
+    # 4. Variational family q(z) = N(m, L L^T)  (or diagonal L)
+    # --------------------------------------------------------------------------
+    rho0 = jnp.full((D,), jnp.log(jnp.expm1(init_post_std)))   # softplus^-1(init_post_std)
+    vi_params = {'mu': jnp.zeros(D), 'rho': rho0}
+    if full_rank:
+        vi_params['tril'] = jnp.zeros((D, D))       # strictly-lower off-diagonals
+
+    tril_mask = jnp.tril(jnp.ones((D, D)), k=-1)
+
+    def scale_tril(vi):
+        """Cholesky factor with a positive diagonal."""
+        diag = jnp.diag(jax.nn.softplus(vi['rho']))
+        if not full_rank:
+            return diag
+        return diag + vi['tril'] * tril_mask
+
+    # Rematerialize each MC draw. The Python loop below UNROLLS into the graph, so
+    # without this reverse-mode AD keeps the intermediates of all `n_mc` forward
+    # passes alive at once -- with the Poisson term in the likelihood that is a
+    # (grid**3 x n_particles x n_quad**3) tensor per draw, and the step OOMs at
+    # n_mc=4. Checkpointing recomputes each draw's forward pass during the backward
+    # pass instead, which really does hold peak memory at one evaluation.
+    _log_joint_mc = jax.checkpoint(log_joint_z) if mc_remat else log_joint_z
+
+    def neg_elbo(vi, eps):
+        L = scale_tril(vi)
+        # E_q[log joint] by reparameterization.
+        lj = 0.0
+        for k in range(n_mc):
+            lj = lj + _log_joint_mc(vi['mu'] + L @ eps[k])
+        lj = lj / n_mc
+        # H[q] = log|det L| + D/2 (1 + log 2pi); det depends only on the diagonal.
+        entropy = jnp.sum(jnp.log(jax.nn.softplus(vi['rho']))) \
+            + 0.5 * D * (1.0 + jnp.log(2 * jnp.pi))
+        return -(lj + entropy)
+
+    lr = optax.exponential_decay(learning_rate, transition_steps=max(n_steps, 1),
+                                 decay_rate=max(lr_decay, 1e-6), staircase=False)
+    optimizer = optax.chain(optax.clip_by_global_norm(grad_clip_norm), optax.adam(lr))
+    opt_state = optimizer.init(vi_params)
+
+    @jax.jit
+    def step(vi, opt_state, key):
+        eps = jax.random.normal(key, (n_mc, D))
+        loss, grads = jax.value_and_grad(neg_elbo)(vi, eps)
+        # One unlucky draw can land where the sampling graph produces a non-finite
+        # gradient; zeroing those entries keeps it from poisoning the run (same
+        # rationale as in `fit`).
+        n_bad = sum(jnp.sum(jnp.logical_not(jnp.isfinite(g))) for g in grads.values())
+        grads = jax.tree_util.tree_map(
+            lambda g: jnp.where(jnp.isfinite(g), g, 0.0), grads)
+        updates, opt_state = optimizer.update(grads, opt_state, vi)
+        vi = optax.apply_updates(vi, updates)
+        return vi, opt_state, loss, n_bad
+
+    # Polyak averaging over the tail: stochastic VI reaches a noise ball rather than a
+    # point, so the last iterate is an arbitrary draw from it.
+    n_avg = int(round(avg_frac * n_steps)) if avg_frac > 0 else 0
+    avg_start = n_steps - n_avg
+    acc, n_acc = None, 0
+
+    key = jax.random.PRNGKey(vi_seed)
+    elbo_hist, nan_steps = [], 0
+    for i in range(n_steps):
+        key, sub = jax.random.split(key)
+        vi_params, opt_state, loss, n_bad = step(vi_params, opt_state, sub)
+        elbo_hist.append(float(-loss))
+        if int(n_bad):
+            nan_steps += 1
+        if n_avg and i >= avg_start:
+            acc = vi_params if acc is None else jax.tree_util.tree_map(
+                lambda a, b: a + b, acc, vi_params)
+            n_acc += 1
+        if progress_every and (i + 1) % progress_every == 0:
+            print(f"    [fit_vi] step {i+1:4d}/{n_steps}  ELBO {elbo_hist[-1]:12.2f}")
+
+    if n_acc:
+        vi_params = jax.tree_util.tree_map(lambda a: a / n_acc, acc)
+
+    if nan_steps:
+        frac = 100.0 * nan_steps / max(n_steps, 1)
+        msg = (f"non-finite ELBO gradients on {nan_steps}/{n_steps} steps ({frac:.0f}%); "
+               f"those entries were zeroed, so the posterior may be under-converged.")
+        if frac > 10.0:
+            warnings.warn("fit_vi: " + msg, RuntimeWarning, stacklevel=2)
+        else:
+            print(f"    [fit_vi] note: {msg}")
+
+    # --------------------------------------------------------------------------
+    # 5. Package the posterior (undo the whitening)
+    # --------------------------------------------------------------------------
+    Lz = np.asarray(scale_tril(vi_params))
+    mz = np.asarray(vi_params['mu'])
+    mu = np.asarray(u0_free) + scale * mz            # log-space mean
+    L = scale[:, None] * Lz                          # log-space Cholesky factor
+    cov = L @ L.T
+    std = np.sqrt(np.diag(cov))
+    corr = cov / np.outer(std, std)
+
+    rng = np.random.default_rng(vi_seed)
+    samples_log = mu[None, :] + rng.standard_normal((n_posterior_samples, D)) @ L.T
+
+    # Median parameter vector (frozen entries keep their fixed value).
+    median_tree = unravel(_scatter(jnp.asarray(mu)))
+    pot_params, disk_df_params, bulge_df_params = log_to_params(median_tree)
+
+    posterior = {'pot': {}, 'disk': {}, 'bulge': {}}
+    for j, (group, k) in enumerate(free_names):
+        posterior[group][k] = {
+            'median': float(np.exp(mu[j])),
+            'lo': float(np.exp(mu[j] - std[j])),
+            'hi': float(np.exp(mu[j] + std[j])),
+            'log_std': float(std[j]),
+        }
+    frozen = {}
+    for i, (group, k) in enumerate(names):
+        if k in frozen_params:
+            frozen.setdefault(group, {})[k] = float(np.exp(np.asarray(mu0_vec)[i]))
+
+    return {
+        'names': free_names,
+        'labels': [k for _, k in free_names],
+        'mu_log': mu,
+        'cov_log': cov,
+        'std_log': std,
+        'corr_log': corr,
+        'scale_tril': L,
+        'precond_scale': scale,
+        'at_bound': at_bound,
+        'samples_log': samples_log,
+        'samples': np.exp(samples_log),
+        'posterior': posterior,
+        'pot_params': {k: float(v) for k, v in pot_params.items()},
+        'disk_df_params': {k: float(v) for k, v in disk_df_params.items()},
+        'bulge_df_params': {k: float(v) for k, v in bulge_df_params.items()},
+        'elbo_hist': elbo_hist,
+        'frozen': frozen,
+        'full_rank': full_rank,
+        'nan_steps': nan_steps,
+    }

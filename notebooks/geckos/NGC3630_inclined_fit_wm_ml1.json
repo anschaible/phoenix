@@ -1,0 +1,95 @@
+{
+  "galaxy": "NGC3630",
+  "inclination_deg": 75.0,
+  "ml_ratio": 1.0,
+  "config": {
+    "GRID_SIZE": 40,
+    "N_PARTICLES": 12000,
+    "N_STEPS": 400,
+    "SEED": 0,
+    "FINAL_H": 0.15,
+    "LOSS_WEIGHTS": [
+      1.0,
+      4.0,
+      2.0,
+      0.0
+    ],
+    "sampler": "importance",
+    "mask_dust": false,
+    "dust_masked_cells": 0,
+    "sigmaR0_cap": 40.0,
+    "rd_bounds": [
+      1.2,
+      4.0
+    ],
+    "ml_ratios": [
+      1.0,
+      1.0
+    ],
+    "weight_mass": true,
+    "a_bulge_bounds": null,
+    "fitted_cells": 473
+  },
+  "nan_steps": 0,
+  "goodness_of_fit": {
+    "rms_vlos": 29.363536834716797,
+    "rms_sigma": 17.843429565429688,
+    "median_abs_vlos": 17.526382446289062,
+    "median_abs_sigma": 12.593917846679688
+  },
+  "signatures": {
+    "observed": {
+      "v_pk": 169.53878784179688,
+      "dvdx": 170.3023681640625,
+      "sig_cen": 131.89422607421875,
+      "sig_disk": 61.31276321411133,
+      "ratio": 2.1511707305908203,
+      "lum_cen": 433313728.0,
+      "lum_disk": 33036926.0,
+      "lum_ratio": 13.116042137145996
+    },
+    "model": {
+      "v_pk": 141.0695343017578,
+      "dvdx": 92.26253509521484,
+      "sig_cen": 106.61945343017578,
+      "sig_disk": 73.50430297851562,
+      "ratio": 1.4505199193954468,
+      "lum_cen": 137457136.0,
+      "lum_disk": 47040816.0,
+      "lum_ratio": 2.9220821857452393
+    }
+  },
+  "final_loss": {
+    "loss": 0.312167763710022,
+    "mass_loss": 0.11472997069358826,
+    "vrot_loss": 0.028082512319087982,
+    "sigma_loss": 0.035766664892435074
+  },
+  "pot_params": {
+    "M_bulge": 9461647360.0,
+    "M_disk": 33127542784.0,
+    "M_halo": 163492052992.0,
+    "a_bulge": 0.2092457413673401,
+    "a_disk": 5.942598342895508,
+    "a_halo": 10.889225006103516,
+    "b_disk": 1.097739815711975
+  },
+  "disk_df_params": {
+    "L0": 2.9964113235473633,
+    "R0": 5.018987655639648,
+    "Rd": 1.2000000476837158,
+    "Rinit_for_Rc": 4.000034332275391,
+    "RsigR": 4.583512783050537,
+    "RsigZ": 10.120338439941406,
+    "Sigma0": 999.9986572265625,
+    "sigmaR0_R0": 40.0,
+    "sigmaz0_R0": 28.724239349365234
+  },
+  "bulge_df_params": {
+    "Beta_spheroid": 5.1423726081848145,
+    "Gamma_spheroid": 1.4309883117675781,
+    "J0_spheroid": 31.72648811340332,
+    "N0_spheroid": 30000023552.0,
+    "eta_spheroid": 1.075681447982788
+  }
+}

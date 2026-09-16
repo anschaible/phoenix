@@ -22,10 +22,25 @@ on a regular (grid_size x grid_size) grid in kpc, ready to pass to
   7. rescale the light map to a fiducial stellar mass (see caveats below).
 
 Caveats (this is real, light-based data fed to an idealized model):
-  - FLUX is *light*, used as a stellar-*mass* proxy assuming constant M/L. The
-    absolute normalization is unknown, so the map is rescaled to `Mstar_fiducial`;
-    the fit's free M_disk/M_bulge then absorb that choice. The velocity fields
-    (km/s) carry the real physical scale that constrains the potential mass.
+  - FLUX is *light*. The absolute normalization is unknown, so the map is rescaled to
+    `Mstar_fiducial` and the fit's free M_disk/M_bulge absorb that choice. The
+    velocity fields (km/s) carry the real physical scale that constrains the mass.
+
+    Treating that rescaled light map as a stellar-MASS map is equivalent to assuming
+    a single mass-to-light ratio for the whole galaxy, because a spatially constant
+    Upsilon cancels exactly in the pipeline's log-space map residual (and in the
+    kinematic maps, which are ratios of weighted sums). Real galaxies are not one
+    population: an old bulge is typically 2-4x dimmer per unit mass than a younger
+    disk, so the light map is a different combination of the components than the mass
+    map is.
+
+    The fix is on the MODEL side, not here: pass `ml_ratios=(1.0, r)` to
+    `pipeline.fit`, which makes the model produce light with the bulge dimmed by
+    r = Upsilon_bulge/Upsilon_disk, so like is compared with like. Only the ratio is
+    identifiable -- a common factor on Upsilon is degenerate with `Mstar_fiducial`
+    and cancels in the same residual -- which is why Upsilon_disk is pinned at 1.
+    `fit_inclined.py` takes `ml_ratio`, and `ml_scan.py` profiles the loss over it;
+    r = 1 reproduces the single-M/L behaviour exactly.
   - `kpc_per_arcsec` requires a distance. Default is for NGC 5010 (D ~ 42 Mpc).
 """
 import numpy as np

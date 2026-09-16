@@ -1,0 +1,87 @@
+{
+  "galaxy": "NGC3630",
+  "inclination_deg": 75.0,
+  "ml_ratio": 1.5,
+  "config": {
+    "GRID_SIZE": 40,
+    "N_PARTICLES": 12000,
+    "N_STEPS": 400,
+    "SEED": 0,
+    "FINAL_H": 0.15,
+    "LOSS_WEIGHTS": [
+      1.0,
+      4.0,
+      2.0,
+      0.0
+    ],
+    "sampler": "importance",
+    "mask_dust": false,
+    "dust_masked_cells": 0,
+    "sigmaR0_cap": 40.0,
+    "rd_bounds": [
+      1.2,
+      4.0
+    ],
+    "ml_ratios": [
+      1.0,
+      1.5
+    ],
+    "fitted_cells": 473
+  },
+  "nan_steps": 0,
+  "goodness_of_fit": {
+    "rms_vlos": 31.8418025970459,
+    "rms_sigma": 24.21060562133789,
+    "median_abs_vlos": 21.186187744140625,
+    "median_abs_sigma": 12.611701965332031
+  },
+  "signatures": {
+    "observed": {
+      "v_pk": 169.53878784179688,
+      "dvdx": 170.3023681640625,
+      "sig_cen": 131.89422607421875,
+      "sig_disk": 61.31276321411133,
+      "ratio": 2.1511707305908203
+    },
+    "model": {
+      "v_pk": 170.3533172607422,
+      "dvdx": 181.24359130859375,
+      "sig_cen": 87.28985595703125,
+      "sig_disk": 81.65290069580078,
+      "ratio": 1.069035530090332
+    }
+  },
+  "final_loss": {
+    "loss": 0.2852674424648285,
+    "mass_loss": 0.07587065547704697,
+    "vrot_loss": 0.027903713285923004,
+    "sigma_loss": 0.03694844990968704
+  },
+  "pot_params": {
+    "M_bulge": 28846395392.0,
+    "M_disk": 36314226688.0,
+    "M_halo": 182726656000.0,
+    "a_bulge": 1.2668123245239258,
+    "a_disk": 5.644102096557617,
+    "a_halo": 12.193571090698242,
+    "b_disk": 0.3897954225540161
+  },
+  "disk_df_params": {
+    "L0": 2.966858386993408,
+    "R0": 7.483358860015869,
+    "Rd": 1.2000000476837158,
+    "Rinit_for_Rc": 4.00806999206543,
+    "RsigR": 7.148275375366211,
+    "RsigZ": 14.776498794555664,
+    "Sigma0": 999.9986572265625,
+    "sigmaR0_R0": 31.25729751586914,
+    "sigmaz0_R0": 90.00000762939453
+  },
+  "bulge_df_params": {
+    "Beta_spheroid": 12.0,
+    "Gamma_spheroid": 2.8000001907348633,
+    "J0_spheroid": 9.485933303833008,
+    "N0_spheroid": 29999968256.0,
+    "eta_spheroid": 0.30000001192092896
+  }
+}

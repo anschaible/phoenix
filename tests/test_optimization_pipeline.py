@@ -913,3 +913,27 @@ def test_sampler_and_ml_ratios_compose(fake_mapper, all_params):
                                                             None)
     for value in _terms(aux):
         assert value == pytest.approx(0.0, abs=1e-8)
+
+
+def test_zero_poisson_weight_skips_the_penalty(fake_mapper, all_params):
+    """At zero weight the penalty is not merely multiplied by zero, it is not built:
+    it is the most expensive part of the graph and evaluating it anyway is what made
+    the large-grid GECKOS fits die with RESOURCE_EXHAUSTED. The total loss must be
+    unchanged, and the reported penalty must be exactly 0."""
+    pot, disk, bulge = all_params
+    obs = make_observation(fake_mapper, pot, disk, bulge, **CFG)
+    off = params_to_log({k: v * 1.3 for k, v in pot.items()}, disk, bulge)
+
+    loss_z, aux_z = make_loss_fn(fake_mapper, obs, loss_weights=(1.0, 1.0, 1.0, 0.0),
+                                 poisson_kwargs=POISSON_KW, **CFG)(off, None)
+    loss_w, aux_w = make_loss_fn(fake_mapper, obs, loss_weights=(1.0, 1.0, 1.0, 0.5),
+                                 poisson_kwargs=POISSON_KW, **CFG)(off, None)
+
+    assert float(aux_z["poisson_penalty"]) == 0.0
+    assert float(aux_w["poisson_penalty"]) > 0.0
+    # The zero-weight total is the data terms alone.
+    expected = sum(_terms(aux_z))
+    np.testing.assert_allclose(float(loss_z), expected, rtol=1e-5)
+    # ... and the weighted run differs from it by exactly w * penalty.
+    np.testing.assert_allclose(float(loss_w) - sum(_terms(aux_w)),
+                               0.5 * float(aux_w["poisson_penalty"]), rtol=1e-5)

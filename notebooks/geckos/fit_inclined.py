@@ -14,6 +14,14 @@ Setup, and why each piece is there (all established by measurement, see below):
   * obs_bandwidth + fine final bandwidth -- load_geckos_maps HARD-bins the data while
     the model is KDE-smoothed; unmatched, the annealing is biased and the central
     velocity gradient is resolution-capped (dv/dx 63 at h=0.8 vs 100 at h=0.12).
+  * ml_ratio              -- the data's first map is FLUX, not mass (see
+    `geckos_data.load_geckos_maps`), so fitting a mass map against it assumes one
+    mass-to-light ratio for the whole galaxy. `ml_ratio` = Upsilon_bulge/Upsilon_disk
+    lets the bulge be dimmer per unit mass than the disk, as an old population is.
+    Only the RATIO is identifiable: a common factor on Upsilon is degenerate with the
+    light map's arbitrary normalization (`Mstar_fiducial`), and cancels in the
+    log-space map residual. ml_ratio = 1 reproduces the previous behaviour exactly.
+    See `ml_scan.py` for the profile scan over it.
   * inclination           -- per galaxy, set from its own photometric axis ratio
     (`inclination_scan.photometric_inclination`), not assumed. NGC 5010 has
     b/a = 0.22-0.25 on the disk isophotes -> i ~ 78-85, and a loss scan found 80 and
@@ -25,6 +33,7 @@ Run from the repo root:
     python notebooks/geckos/fit_inclined.py            # all configured galaxies
     python notebooks/geckos/fit_inclined.py NGC3630    # one galaxy
     QUICK=1 python notebooks/geckos/fit_inclined.py NGC3630
+    ML_RATIO=3 python notebooks/geckos/fit_inclined.py NGC3630   # bulge 3x dimmer/mass
 """
 import copy
 import json
@@ -90,18 +99,25 @@ GRID_SIZE = 40
 # log(0) = -inf and NaN gradients for every potential and disk parameter. Fixed with
 # a double-`where`; gradients are now finite at 4k-24k across the whole annealing
 # range, and `res['nan_steps']` below asserts it stays that way.
-N_PARTICLES = 4_000 if QUICK else 24_000
-N_STEPS = 30 if QUICK else 500
-N_RENDER = 20_000 if QUICK else 150_000
+N_PARTICLES = int(os.environ.get("N_PARTICLES", 4_000 if QUICK else 24_000))
+N_STEPS = int(os.environ.get("N_STEPS", 30 if QUICK else 500))
+N_RENDER = int(os.environ.get("N_RENDER", 20_000 if QUICK else 150_000))
 SEED = 0
 FINAL_H = 0.15
 DEFAULT_LOSS_WEIGHTS = (1.0, 2.0, 3.0, 0.0)
+# Upsilon_bulge / Upsilon_disk. 1.0 = one M/L for the whole galaxy, i.e. exactly the
+# behaviour before `ml_ratios` existed. See the docstring.
+ML_RATIO = float(os.environ.get("ML_RATIO", 1.0))
 
 
 def signature_metrics(maps, keep, xc, zc):
-    """The two signatures, measured only on unobscured cells:
-    the central velocity gradient and the central-to-disk dispersion contrast."""
+    """The signatures, measured only on unobscured cells: the central velocity
+    gradient, the central-to-disk dispersion contrast, and the central-to-disk
+    LIGHT contrast. The last is scale-free on purpose -- the absolute normalization
+    of the observed flux map is arbitrary (`Mstar_fiducial`) and the fit absorbs it
+    into M_disk/M_bulge, so only the ratio is a meaningful target."""
     V, S = np.array(maps["v_rot"]), np.array(maps["sigma"])
+    L = np.array(maps["mass"])
     # Midplane row with the most surviving cells (the dust lane removes part of one).
     cand = [j for j in range(len(zc)) if abs(zc[j]) < 0.6]
     kz = max(cand, key=lambda j: keep[j].sum())
@@ -113,20 +129,50 @@ def signature_metrics(maps, keep, xc, zc):
     dsk = (keep & (np.abs(xc)[None, :] > 2) & (np.abs(xc)[None, :] < 5)
            & (np.abs(zc)[:, None] < 0.5))
     sc, sd = S[cen].mean(), S[dsk].mean()
+    lc, ld = L[cen].mean(), L[dsk].mean()
     return dict(v_pk=float(np.nanmax(np.abs(row))), dvdx=float(dv),
-                sig_cen=float(sc), sig_disk=float(sd), ratio=float(sc / sd))
+                sig_cen=float(sc), sig_disk=float(sd), ratio=float(sc / sd),
+                lum_cen=float(lc), lum_disk=float(ld),
+                lum_ratio=float(lc / max(ld, 1e-30)))
 
 
-def fit_galaxy(NAME, mapper):
+def fit_galaxy(NAME, mapper, ml_ratio=None, outdir=None, out_tag=None):
+    """Fit one galaxy. `ml_ratio` is Upsilon_bulge/Upsilon_disk (default `ML_RATIO`);
+    at 1.0 the model's first map is a plain mass map, which -- because a constant
+    Upsilon cancels in the log-space residual -- is what fitting flux with a single
+    global M/L amounts to. `outdir`/`out_tag` exist for `ml_scan.py`, which calls this
+    many times at a reduced tracer count and must not overwrite the production
+    outputs."""
+    ml_ratio = ML_RATIO if ml_ratio is None else float(ml_ratio)
     cfg = GALAXIES[NAME]
     INCLINATION = INCLINATIONS[NAME]
     ov = GALAXY_OVERRIDES.get(NAME, {})
     MASK_DUST = ov.get("mask_dust", True)
     LOSS_WEIGHTS = ov.get("loss_weights", DEFAULT_LOSS_WEIGHTS)
-    SIGMAR0_CAP = ov.get("sigmaR0_cap", 120.0)
+    SIGMAR0_CAP = float(os.environ.get("SIGMAR0_CAP", ov.get("sigmaR0_cap", 120.0)))
     RD_BOUNDS = ov.get("rd_bounds", (0.4, 6.0))
-    outdir = os.path.join(HERE, "plots", NAME)
+    if "RD_MIN" in os.environ:
+        RD_BOUNDS = (float(os.environ["RD_MIN"]), RD_BOUNDS[1])
+    # Up-weight the centre in the LIGHT map too, not just the kinematics. `data_fit_loss`
+    # deliberately keeps the first map on flat (mask-only) weights unless asked, so with
+    # `pixel_weights` set but `weight_mass` False, `feature_weight_map` shapes v_rot and
+    # sigma while nothing in the objective rewards a central light peak.
+    WEIGHT_MASS = bool(int(os.environ.get("WEIGHT_MASS", ov.get("weight_mass", 0))))
+    # An upper bound on a_bulge keeps the bulge a BULGE. Left free it drifts to a
+    # 2.4 kpc blob that can peak neither the light nor the dispersion, and the fit then
+    # tries to build the centre out of the disk instead (Rd pinned at its floor,
+    # sigmaR0 at its cap).
+    A_BULGE_BOUNDS = ov.get("a_bulge_bounds", None)
+    if "A_BULGE_MAX" in os.environ:
+        A_BULGE_BOUNDS = (0.05, float(os.environ["A_BULGE_MAX"]))
+    # ml_ratio = 1 keeps the historical paths, so existing outputs are not disturbed.
+    # NB: not `tag` -- the profile-plot loop below binds that name.
+    out_tag = out_tag if out_tag is not None else os.environ.get(
+        "OUT_TAG", "" if ml_ratio == 1.0 else f"_ml{ml_ratio:g}")
+    outdir = outdir or os.path.join(HERE, "plots", NAME)
     os.makedirs(outdir, exist_ok=True)
+    # Upsilon_disk is fixed at 1: only the ratio is identifiable (see the docstring).
+    ML_RATIOS = (1.0, ml_ratio)
     EX, EZ = cfg["extent_x"], cfg["extent_z"]
     PIXEL = max(2 * EX / GRID_SIZE, 2 * EZ / GRID_SIZE)
 
@@ -155,7 +201,12 @@ def fit_galaxy(NAME, mapper):
               f"(one-sided, as a dust lane must be)")
     else:
         print(f"  {observed.sum()} observed cells, no dust masking, fitting {keep.sum()}")
-    print(f"  loss weights {LOSS_WEIGHTS}, sigmaR0 cap {SIGMAR0_CAP}, Rd in {RD_BOUNDS}")
+    print(f"  loss weights {LOSS_WEIGHTS}, sigmaR0 cap {SIGMAR0_CAP}, Rd in {RD_BOUNDS}"
+          + (f", a_bulge in {tuple(A_BULGE_BOUNDS)}" if A_BULGE_BOUNDS else "")
+          + f", weight_mass={WEIGHT_MASS}")
+    print(f"  Upsilon_bulge/Upsilon_disk = {ml_ratio:g}"
+          + ("  (single global M/L -- the pre-ml_ratios behaviour)" if ml_ratio == 1.0
+             else "  (bulge dimmer per unit mass than the disk)"))
 
     tgt = signature_metrics(obs, keep, xc, zc)
     print(f"  observed signatures (unobscured cells): v_pk={tgt['v_pk']:.1f} km/s, "
@@ -167,6 +218,8 @@ def fit_galaxy(NAME, mapper):
     bounds["disk"]["sigmaR0_R0"] = (5.0, SIGMAR0_CAP)
     bounds["disk"]["sigmaz0_R0"] = (5.0, 90.0)
     bounds["disk"]["Rd"] = RD_BOUNDS
+    if A_BULGE_BOUNDS is not None:
+        bounds["pot"]["a_bulge"] = tuple(A_BULGE_BOUNDS)
     weights = feature_weight_map(GRID_SIZE, EX, EZ, midplane_z=0.6, w_midplane=4.0,
                                  center_x=2.5, w_center=2.0)
 
@@ -183,6 +236,7 @@ def fit_galaxy(NAME, mapper):
         inclination_deg=INCLINATION, sampler="importance",
         param_bounds=bounds, reg_weight=REG_WEIGHT,
         extra_mask=(dust if MASK_DUST else None), pixel_weights=weights,
+        ml_ratios=ML_RATIOS, weight_mass=WEIGHT_MASS,
     )
     h = res["history"]
     print(f"  loss {h['loss'][0]:.4f} -> {h['loss'][-1]:.4f}  "
@@ -203,6 +257,7 @@ def fit_galaxy(NAME, mapper):
         extent_x=EX, extent_z=EZ, prng_seed=SEED, soft_bin_h=FINAL_H,
         spheroid_corotation=cfg["spheroid_corotation"],
         inclination_deg=INCLINATION, sampler="importance", chunk=15_000,
+        ml_ratios=ML_RATIOS,
     )
 
     # ---------------- goodness of fit ----------------
@@ -219,7 +274,7 @@ def fit_galaxy(NAME, mapper):
     print(f"    {'signature':<16s} {'observed':>10s} {'model':>10s}")
     for k, lab in (("v_pk", "peak |v_los|"), ("dvdx", "central dv/dx"),
                    ("sig_cen", "sigma centre"), ("sig_disk", "sigma disk"),
-                   ("ratio", "sigma ratio")):
+                   ("ratio", "sigma ratio"), ("lum_ratio", "light centre/disk")):
         print(f"    {lab:<16s} {tgt[k]:10.2f} {got[k]:10.2f}")
     print(f"\n  fitted: Rd={float(res['disk_df_params']['Rd']):.2f} kpc  "
           f"sigmaR0={float(res['disk_df_params']['sigmaR0_R0']):.0f}  "
@@ -273,7 +328,7 @@ def fit_galaxy(NAME, mapper):
     fig.suptitle(f"{NAME}: observed vs fitted Phoenix model, i = {INCLINATION:.0f}$^\\circ$, "
                  f"dust lane {'masked' if MASK_DUST else 'NOT masked'}", fontsize=14)
     fig.tight_layout()
-    f1 = os.path.join(outdir, f"{NAME}_inclined_fit_maps.png")
+    f1 = os.path.join(outdir, f"{NAME}_inclined_fit_maps{out_tag}.png")
     fig.savefig(f1, dpi=125); plt.close(fig)
 
     # ---------------- profile figure ----------------
@@ -297,19 +352,22 @@ def fit_galaxy(NAME, mapper):
     ax[2].legend(); ax[2].grid(alpha=.3)
     fig.suptitle(f"{NAME}: profile comparison, i = {INCLINATION:.0f}$^\\circ$")
     fig.tight_layout()
-    f2 = os.path.join(outdir, f"{NAME}_inclined_fit_profiles.png")
+    f2 = os.path.join(outdir, f"{NAME}_inclined_fit_profiles{out_tag}.png")
     fig.savefig(f2, dpi=130); plt.close(fig)
 
-    out = os.path.join(HERE, f"{NAME}_inclined_fit.json")
+    out = os.path.join(HERE, f"{NAME}_inclined_fit{out_tag}.json")
     with open(out, "w") as fh:
         json.dump({
-            "galaxy": NAME, "inclination_deg": INCLINATION,
+            "galaxy": NAME, "inclination_deg": INCLINATION, "ml_ratio": ml_ratio,
             "config": {"GRID_SIZE": GRID_SIZE, "N_PARTICLES": N_PARTICLES,
                        "N_STEPS": N_STEPS, "SEED": SEED, "FINAL_H": FINAL_H,
                        "LOSS_WEIGHTS": list(LOSS_WEIGHTS), "sampler": "importance",
                        "mask_dust": bool(MASK_DUST),
                        "dust_masked_cells": int(dust.sum()),
                        "sigmaR0_cap": SIGMAR0_CAP, "rd_bounds": list(RD_BOUNDS),
+                       "ml_ratios": list(ML_RATIOS), "weight_mass": bool(WEIGHT_MASS),
+                       "a_bulge_bounds": (list(A_BULGE_BOUNDS) if A_BULGE_BOUNDS
+                                          else None),
                        "fitted_cells": int(keep.sum())},
             "nan_steps": int(res["nan_steps"]),
             "goodness_of_fit": {"rms_vlos": rms_v, "rms_sigma": rms_s,
