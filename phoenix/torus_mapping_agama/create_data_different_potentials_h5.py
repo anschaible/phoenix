@@ -7,6 +7,9 @@ import h5py
 np.random.seed(42)
 agama.setUnits(mass=1, length=1, velocity=1)
 
+# ==============================================================================
+# 1. Adjust these based on your RAM and storage limits
+# ==============================================================================
 # Config
 N_potentials = 100         
 N_tori_per_pot = 500       
@@ -21,8 +24,6 @@ print(f"Creating HDF5 file at {h5_path}...")
 print(f"Pre-allocating space for {total_estimated_rows:,} potential rows...")
 
 with h5py.File(h5_path, 'w') as f:
-    # 1. FIX: Pre-allocate the full estimated shape. 
-    # maxshape=(None, X) ensures we are still allowed to shrink the arrays at the end.
     dset_actions = f.create_dataset('actions', shape=(total_estimated_rows, 3), maxshape=(None, 3), dtype='float32', chunks=(10000, 3), compression="gzip")
     dset_angles = f.create_dataset('angles', shape=(total_estimated_rows, 3), maxshape=(None, 3), dtype='float32', chunks=(10000, 3), compression="gzip")
     dset_potentials = f.create_dataset('potentials', shape=(total_estimated_rows, 7), maxshape=(None, 7), dtype='float32', chunks=(10000, 7), compression="gzip")
@@ -30,6 +31,9 @@ with h5py.File(h5_path, 'w') as f:
 
     written_rows = 0
 
+    # ==============================================================================
+    # 2. OUTER LOOP: GENERATING DIFFERENT GALACTIC POTENTIALS
+    # ==============================================================================
     for p_idx in range(N_potentials):
         # --- Generate unique potential parameters ---
         M_halo = np.random.uniform(5e11, 3e12)
@@ -46,8 +50,8 @@ with h5py.File(h5_path, 'w') as f:
         
         try:
             halo = agama.Potential(type='NFW', mass=M_halo, scaleRadius=R_halo)
-            disk = agama.Potential(type='Disk', surfaceDensity=Sigma_disk, scaleRadius=R_disk, scaleHeight=H_disk)
-            bulge = agama.Potential(type='Spheroid', mass=M_bulge, scaleRadius=R_bulge, gamma=1, beta=4, alpha=1)
+            disk = agama.Potential(type='MiyamotoNagai', mass=M_disk, scaleRadius=R_disk, scaleHeight=H_disk)
+            bulge = agama.Potential(type='Isochrone', mass=M_bulge, scaleRadius=R_bulge)
             total_potential = agama.Potential(halo, disk, bulge)
             mapper = agama.ActionMapper(total_potential)
         except RuntimeError:
@@ -55,14 +59,40 @@ with h5py.File(h5_path, 'w') as f:
 
         current_pot_features = np.array([M_halo/1e11, R_halo, M_disk/1e11, R_disk, H_disk, M_bulge/1e11, R_bulge], dtype='float32')
 
-        # --- Sample Actions for this potential ---
-        J_R = np.random.uniform(0.1, 200.0, N_tori_per_pot)   
-        J_z = np.random.uniform(0.1, 100.0, N_tori_per_pot)    
-        J_phi = np.random.uniform(10.0, 4000.0, N_tori_per_pot) * np.random.choice([-1, 1], size=N_tori_per_pot)
+        # ==============================================================================
+        # We split the tori into "Cold" (Disk) and "Hot" (Bulge/Halo) regimes
+        # so the neural network perfectly learns both extremes without starving either.
+        # ==============================================================================
+        N_hot = N_tori_per_pot // 2
+        N_cold = N_tori_per_pot - N_hot
+        
+        # 1. Cold Orbits (Disk-like: Low radial/vertical energy)
+        J_R_cold = np.random.uniform(0.1, 150.0, N_cold)
+        J_z_cold = np.random.uniform(0.1, 100.0, N_cold)
+        
+        # 2. Hot Orbits (Bulge/Halo-like: Extreme radial/vertical energy)
+        # Bumping the max bounds up to 1500 prevents the NN from ever extrapolating!
+        J_R_hot = np.random.uniform(150.0, 1500.0, N_hot)
+        J_z_hot = np.random.uniform(100.0, 1500.0, N_hot)
+        
+        J_R = np.concatenate([J_R_cold, J_R_hot])
+        J_z = np.concatenate([J_z_cold, J_z_hot])
+        
+        # 3. Angular Momentum
+        J_phi = np.random.uniform(0.1, 5000.0, N_tori_per_pot) * np.random.choice([-1, 1], size=N_tori_per_pot)
+        
+        # Shuffle the arrays to mix hot and cold orbits in the batches
+        np.random.shuffle(J_R)
+        np.random.shuffle(J_z)
+        np.random.shuffle(J_phi)
+        
         unique_actions = np.vstack([J_R, J_z, J_phi]).T
 
         pot_actions, pot_angles, pot_features, pot_xv = [], [], [], []
 
+        # ==============================================================================
+        # 3. INNER LOOP: SAMPLING ACTION-ANGLE TORI FOR THIS GALACTIC CONFIGURATION
+        # ==============================================================================
         for J in unique_actions:
             angles = np.random.uniform(0, 2 * np.pi, (N_angles_per_torus, 3))
             J_batch = np.tile(J, (N_angles_per_torus, 1))
@@ -88,7 +118,7 @@ with h5py.File(h5_path, 'w') as f:
         block_xv = np.vstack(pot_xv).astype('float32')
         n_new_rows = block_actions.shape[0]
 
-        # 2. FIX: Write directly into the pre-allocated slice boundaries
+        # Write directly into the pre-allocated slice boundaries
         dset_actions[written_rows : written_rows + n_new_rows] = block_actions
         dset_angles[written_rows : written_rows + n_new_rows] = block_angles
         dset_potentials[written_rows : written_rows + n_new_rows] = block_features
@@ -99,7 +129,7 @@ with h5py.File(h5_path, 'w') as f:
         if (p_idx + 1) % 10 == 0 or p_idx == N_potentials - 1:
             print(f"Progress: [{p_idx+1}/{N_potentials}] potentials processed. Total rows saved: {written_rows:,}")
 
-    # 3. FIX: Once the loops are entirely finished, trim off the empty pre-allocated rows
+    # Trim unused pre-allocated rows
     print("Trimming unused pre-allocated rows...")
     dset_actions.resize((written_rows, 3))
     dset_angles.resize((written_rows, 3))

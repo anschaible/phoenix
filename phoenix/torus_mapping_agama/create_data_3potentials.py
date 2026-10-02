@@ -1,6 +1,6 @@
 # 1. Define the Galactic Potential
 # Torus mapping requires an axisymmetric or spherical potential.
-# We will use a standard Miyamoto-Nagai disk.
+
 import agama
 import numpy as np
 
