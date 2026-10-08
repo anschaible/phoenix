@@ -12,6 +12,7 @@ from flax.jax_utils import replicate, unreplicate
 import optax
 from flax.serialization import msgpack_serialize
 import functools
+import time
 
 # ==============================================================================
 # 1. ARCHITECTURE DEFINITION
@@ -223,7 +224,9 @@ if __name__ == "__main__":
     replicated_state = replicate(state)
 
     print("\nInitializing Distributed Training Run...")
+    training_start = time.perf_counter()
     for epoch in range(epochs):
+        epoch_start = time.perf_counter()
         train_loss_accumulator = 0.0
         train_step_count = 0
         
@@ -249,7 +252,13 @@ if __name__ == "__main__":
             val_step_count += 1
             
         epoch_val_loss = val_loss_accumulator / val_step_count
-        print(f"Epoch {epoch+1:02d}/{epochs} | Average Train MSE: {epoch_train_loss:.6f} | Average Val MSE: {epoch_val_loss:.6f}")
+        # JAX dispatches asynchronously: wait for the GPUs before reading the clock
+        jax.block_until_ready((replicated_state, epoch_val_loss))
+        epoch_time = time.perf_counter() - epoch_start
+        print(f"Epoch {epoch+1:02d}/{epochs} | Average Train MSE: {epoch_train_loss:.6f} | Average Val MSE: {epoch_val_loss:.6f} | Time: {epoch_time:.1f} s")
+
+    training_time = time.perf_counter() - training_start
+    print(f"\nTotal training time ({epochs} epochs): {training_time:.1f} s ({training_time / 60:.2f} min, {training_time / epochs:.1f} s/epoch)")
 
     # Out-of-Sample Test Evaluation 
     print("\nRunning unbiased validation over locked out Test Set...")
