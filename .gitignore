@@ -143,3 +143,5 @@ notebooks/geckos/data/*
 notebooks/geckos/plots/*
 
 phoenix/torus_mapping_agama/data_mapping/*
+notebooks/old/*
+notebooks/geckos/*
